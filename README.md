@@ -1,4 +1,7 @@
-<div align="center"><img src="src/visualizer/gui/assets/logo/lichtfeld-logo-white.svg" alt="LichtFeld Studio" height="60"></div>
+<div align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="src/visualizer/gui/assets/logo/lichtfeld-logo-white.svg">
+  <img src="src/visualizer/gui/assets/logo/lichtfeld-logo.svg" alt="LichtFeld Studio" height="60">
+</picture></div>
 
 <div align="center">
 **A high-performance C++ and CUDA implementation of 3D Gaussian Splatting**
