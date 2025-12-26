@@ -43,6 +43,7 @@
     "title": "クイックスタートガイド",
     "description": "データセットの準備方法とLichtFeld Studioの使い方を学びましょう:",
     "wiki_section": "Wiki & よくある質問",
+    "video_latest": "最新チュートリアル",
     "video_reality_scan": "Reality Scanデータセット",
     "video_colmap": "COLMAPチュートリアル",
     "video_lichtfeld": "LichtFeldチュートリアル",

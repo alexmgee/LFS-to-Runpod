@@ -137,7 +137,7 @@ namespace lfs::vis::gui {
                 toU32(withAlpha(t.palette.text, 0.6f)));
 
             if (thumb.state == Thumbnail::State::LOADING)
-                dl->AddText({cursor.x + 4, cursor.y + CARD_HEIGHT - 16}, toU32(t.palette.text_dim), LOC("getting_started.loading"));
+                dl->AddText({cursor.x + 4, cursor.y + CARD_HEIGHT - 16}, toU32(t.palette.text_dim), LOC(GettingStarted::LOADING));
         }
 
         dl->AddText({cursor.x + 4, cursor.y + CARD_HEIGHT + 4.0f}, toU32(t.palette.text), title);
@@ -146,7 +146,6 @@ namespace lfs::vis::gui {
     void MenuBar::render() {
         const auto& t = theme();
 
-        // Use regular font for entire menu bar
         if (fonts_.regular)
             ImGui::PushFont(fonts_.regular);
 
@@ -295,27 +294,29 @@ namespace lfs::vis::gui {
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.palette.surface_bright);
         ImGui::PushStyleColor(ImGuiCol_Border, withAlpha(t.palette.info, 0.3f));
 
-        if (ImGui::Begin(LOC("window.getting_started"), &show_getting_started_, WINDOW_FLAGS)) {
+        if (ImGui::Begin(LOC(Window::GETTING_STARTED), &show_getting_started_, WINDOW_FLAGS)) {
             updateThumbnails();
 
             if (fonts_.heading)
                 ImGui::PushFont(fonts_.heading);
-            ImGui::TextColored(t.palette.info, LOC("getting_started.title"));
+            ImGui::TextColored(t.palette.info, LOC(GettingStarted::TITLE));
             if (fonts_.heading)
                 ImGui::PopFont();
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::TextWrapped("%s", LOC("getting_started.description"));
+            ImGui::TextWrapped("%s", LOC(GettingStarted::DESCRIPTION));
             ImGui::Spacing();
             ImGui::Spacing();
 
-            renderVideoCard(LOC("getting_started.video_reality_scan"), "JWmkhTlbDvg", "https://www.youtube.com/watch?v=JWmkhTlbDvg");
+            renderVideoCard(LOC(GettingStarted::VIDEO_LATEST), "zWIzBHRc-60", "https://www.youtube.com/watch?v=zWIzBHRc-60");
             ImGui::SameLine(0.0f, VIDEO_SPACING);
-            renderVideoCard(LOC("getting_started.video_colmap"), "-3TBbukYN00", "https://www.youtube.com/watch?v=-3TBbukYN00");
+            renderVideoCard(LOC(GettingStarted::VIDEO_REALITY_SCAN), "JWmkhTlbDvg", "https://www.youtube.com/watch?v=JWmkhTlbDvg");
             ImGui::SameLine(0.0f, VIDEO_SPACING);
-            renderVideoCard(LOC("getting_started.video_lichtfeld"), "aX8MTlr9Ypc", "https://www.youtube.com/watch?v=aX8MTlr9Ypc");
+            renderVideoCard(LOC(GettingStarted::VIDEO_COLMAP), "-3TBbukYN00", "https://www.youtube.com/watch?v=-3TBbukYN00");
+            ImGui::SameLine(0.0f, VIDEO_SPACING);
+            renderVideoCard(LOC(GettingStarted::VIDEO_LICHTFELD), "aX8MTlr9Ypc", "https://www.youtube.com/watch?v=aX8MTlr9Ypc");
 
             ImGui::Spacing();
             ImGui::Spacing();
@@ -324,7 +325,7 @@ namespace lfs::vis::gui {
 
             if (fonts_.section)
                 ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, LOC("getting_started.wiki_section"));
+            ImGui::TextColored(t.palette.text_dim, LOC(GettingStarted::WIKI_SECTION));
             if (fonts_.section)
                 ImGui::PopFont();
             ImGui::Spacing();
@@ -371,24 +372,24 @@ namespace lfs::vis::gui {
         static constexpr const char* REPO_URL = "https://github.com/MrNeRF/LichtFeld-Studio";
         static constexpr const char* WEBSITE_URL = "https://lichtfeld.io";
 
-        if (ImGui::Begin(LOC("window.about"), &show_about_window_, WINDOW_FLAGS)) {
+        if (ImGui::Begin(LOC(Window::ABOUT), &show_about_window_, WINDOW_FLAGS)) {
             if (fonts_.heading)
                 ImGui::PushFont(fonts_.heading);
-            ImGui::TextColored(t.palette.info, LOC("about.title"));
+            ImGui::TextColored(t.palette.info, LOC(About::TITLE));
             if (fonts_.heading)
                 ImGui::PopFont();
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::TextWrapped("%s", LOC("about.description"));
+            ImGui::TextWrapped("%s", LOC(About::DESCRIPTION));
 
             ImGui::Spacing();
             ImGui::Spacing();
 
             if (fonts_.section)
                 ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, LOC("about.build_info"));
+            ImGui::TextColored(t.palette.text_dim, LOC(About::BUILD_INFO));
             if (fonts_.section)
                 ImGui::PopFont();
             ImGui::Spacing();
@@ -402,58 +403,54 @@ namespace lfs::vis::gui {
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC("about.build_info.version"));
+                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::VERSION));
                 ImGui::TableNextColumn();
                 ImGui::TextWrapped("%s", GIT_TAGGED_VERSION);
-                if (ImGui::IsItemHovered()) {
+                if (ImGui::IsItemHovered())
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                }
-                if (ImGui::IsItemClicked()) {
+                if (ImGui::IsItemClicked())
                     ImGui::SetClipboardText(GIT_TAGGED_VERSION);
-                }
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC("about.build_info.commit"));
+                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::COMMIT));
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", GIT_COMMIT_HASH_SHORT);
-                if (ImGui::IsItemHovered()) {
+                if (ImGui::IsItemHovered())
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                }
-                if (ImGui::IsItemClicked()) {
+                if (ImGui::IsItemClicked())
                     ImGui::SetClipboardText(GIT_COMMIT_HASH_SHORT);
-                }
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC("about.build_info.build_type"));
+                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::BUILD_TYPE));
                 ImGui::TableNextColumn();
 #ifdef DEBUG_BUILD
-                ImGui::Text("%s", LOC("about.build_type.debug"));
+                ImGui::Text("%s", LOC(About::BuildType::DEBUG));
 #else
-                ImGui::Text("%s", LOC("about.build_type.release"));
+                ImGui::Text("%s", LOC(About::BuildType::RELEASE));
 #endif
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC("about.build_info.platform"));
+                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::PLATFORM));
                 ImGui::TableNextColumn();
 #ifdef PLATFORM_WINDOWS
-                ImGui::Text("%s", LOC("about.platform.windows"));
+                ImGui::Text("%s", LOC(About::Platform::WINDOWS));
 #elif defined(PLATFORM_LINUX)
-                ImGui::Text("%s", LOC("about.platform.linux"));
+                ImGui::Text("%s", LOC(About::Platform::LINUX));
 #else
-                ImGui::Text("%s", LOC("about.platform.unknown"));
+                ImGui::Text("%s", LOC(About::Platform::UNKNOWN));
 #endif
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC("about.build_info.cuda_gl_interop"));
+                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::CUDA_GL_INTEROP));
                 ImGui::TableNextColumn();
 #ifdef CUDA_GL_INTEROP_ENABLED
-                ImGui::Text("%s", LOC("about.interop.enabled"));
+                ImGui::Text("%s", LOC(About::Interop::ENABLED));
 #else
-                ImGui::Text("%s", LOC("about.interop.disabled"));
+                ImGui::Text("%s", LOC(About::Interop::DISABLED));
 #endif
 
                 ImGui::EndTable();
@@ -464,45 +461,41 @@ namespace lfs::vis::gui {
 
             if (fonts_.section)
                 ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, LOC("about.links"));
+            ImGui::TextColored(t.palette.text_dim, LOC(About::LINKS));
             if (fonts_.section)
                 ImGui::PopFont();
             ImGui::Spacing();
 
             const ImVec4 LINK_COLOR = lighten(t.palette.info, 0.3f);
 
-            ImGui::Text("%s", LOC("about.repository"));
+            ImGui::Text("%s", LOC(About::REPOSITORY));
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, LINK_COLOR);
             ImGui::Text("%s", REPO_URL);
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) {
+            if (ImGui::IsItemHovered())
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            }
-            if (ImGui::IsItemClicked()) {
+            if (ImGui::IsItemClicked())
                 openURL(REPO_URL);
-            }
 
-            ImGui::Text("%s", LOC("about.website"));
+            ImGui::Text("%s", LOC(About::WEBSITE));
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, LINK_COLOR);
             ImGui::Text("%s", WEBSITE_URL);
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) {
+            if (ImGui::IsItemHovered())
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            }
-            if (ImGui::IsItemClicked()) {
+            if (ImGui::IsItemClicked())
                 openURL(WEBSITE_URL);
-            }
 
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            ImGui::TextColored(t.palette.text_dim, LOC("about.authors"));
+            ImGui::TextColored(t.palette.text_dim, LOC(About::AUTHORS));
             ImGui::SameLine();
             ImGui::TextColored(darken(t.palette.text_dim, 0.15f), " | ");
             ImGui::SameLine();
-            ImGui::TextColored(t.palette.text_dim, LOC("about.license"));
+            ImGui::TextColored(t.palette.text_dim, LOC(About::LICENSE));
         }
         ImGui::End();
 
