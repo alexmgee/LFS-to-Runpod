@@ -8,6 +8,7 @@
 #include "core/logger.hpp"
 #include "core/parameter_manager.hpp"
 #include "core/path_utils.hpp"
+#include "core/services.hpp"
 #include "gui/dpi_scale.hpp"
 #include "gui/localization_manager.hpp"
 #include "gui/panels/scene_panel.hpp"
@@ -17,7 +18,6 @@
 #include "internal/resource_paths.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene_manager.hpp"
-#include "core/services.hpp"
 #include "theme/theme.hpp"
 #include "visualizer_impl.hpp"
 
