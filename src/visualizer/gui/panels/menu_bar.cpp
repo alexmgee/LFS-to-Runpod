@@ -10,8 +10,8 @@
 #include "core/training_snapshot.hpp"
 #include "gui/dpi_scale.hpp"
 #ifdef WIN32
-#include <winsock2.h>
 #include <shellapi.h>
+#include <winsock2.h>
 #endif
 #include "gui/localization_manager.hpp"
 #include "gui/string_keys.hpp"

@@ -27,9 +27,9 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
-#include <windows.h>
-#include <io.h>
 #include <fcntl.h>
+#include <io.h>
+#include <windows.h>
 #endif
 
 namespace nvimgcodec {
@@ -38,16 +38,19 @@ namespace nvimgcodec {
 #ifdef _WIN32
         // Helper to convert UTF-8 string to wide string
         std::wstring utf8_to_wstring(const std::string& utf8_str) {
-            if (utf8_str.empty()) return {};
+            if (utf8_str.empty())
+                return {};
             const int size_needed = MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(),
                                                         static_cast<int>(utf8_str.size()),
                                                         nullptr, 0);
-            if (size_needed <= 0) return {};
+            if (size_needed <= 0)
+                return {};
             std::wstring wstr(size_needed, 0);
             const int converted = MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(),
                                                       static_cast<int>(utf8_str.size()),
                                                       &wstr[0], size_needed);
-            if (converted <= 0) return {};
+            if (converted <= 0)
+                return {};
             wstr.resize(converted);
             return wstr;
         }
