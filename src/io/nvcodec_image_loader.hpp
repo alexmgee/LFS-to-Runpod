@@ -20,8 +20,8 @@ namespace lfs::io {
      * @brief Output format for image decoding
      */
     enum class DecodeFormat {
-        RGB,       // 3-channel RGB [C,H,W] or [H,W,C]
-        Grayscale  // 1-channel grayscale [H,W]
+        RGB,      // 3-channel RGB [C,H,W] or [H,W,C]
+        Grayscale // 1-channel grayscale [H,W]
     };
 
     /**

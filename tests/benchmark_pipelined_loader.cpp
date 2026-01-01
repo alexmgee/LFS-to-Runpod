@@ -1594,7 +1594,7 @@ TEST(PipelinedLoaderMask, MaskInvert) {
         ImageRequest request;
         request.sequence_id = 0;
         request.path = image_path;
-        request.params.resize_factor = 4;  // Smaller for faster test
+        request.params.resize_factor = 4; // Smaller for faster test
         request.params.max_width = 0;
         request.mask_path = mask_path;
         request.mask_params.invert = false;
@@ -1621,7 +1621,7 @@ TEST(PipelinedLoaderMask, MaskInvert) {
         PipelinedImageLoader loader(config);
 
         ImageRequest request;
-        request.sequence_id = 1;  // Different sequence_id to avoid cache
+        request.sequence_id = 1; // Different sequence_id to avoid cache
         request.path = image_path;
         request.params.resize_factor = 4;
         request.params.max_width = 0;
@@ -1744,7 +1744,8 @@ TEST(PipelinedLoaderMask, MaskCacheEffectiveness) {
         auto mp = get_mask_path(f);
         if (!mp.empty()) {
             pairs.emplace_back(f, mp);
-            if (pairs.size() >= 20) break;
+            if (pairs.size() >= 20)
+                break;
         }
     }
 
@@ -1795,7 +1796,7 @@ TEST(PipelinedLoaderMask, MaskCacheEffectiveness) {
     auto start2 = std::chrono::high_resolution_clock::now();
     for (size_t i = 0; i < pairs.size(); ++i) {
         ImageRequest request;
-        request.sequence_id = i + 1000;  // Different sequence IDs
+        request.sequence_id = i + 1000; // Different sequence IDs
         request.path = pairs[i].first;
         request.params.resize_factor = 2;
         request.params.max_width = 0;
@@ -1869,7 +1870,8 @@ TEST(PipelinedLoaderMask, MultipleImagesWithMasks) {
         auto mp = get_mask_path(f);
         if (!mp.empty()) {
             pairs.emplace_back(f, mp);
-            if (pairs.size() >= 10) break;
+            if (pairs.size() >= 10)
+                break;
         }
     }
 
@@ -2077,21 +2079,21 @@ TEST(PipelinedLoaderBenchmark, WOW_DD_LargeDataset) {
     }
 
     // Determine auto max_width based on GPU memory (similar to what the app does)
-    int max_width = 1600;  // Reasonable default for large images
+    int max_width = 1600; // Reasonable default for large images
     std::cout << "  Using max_width:   " << max_width << "\n\n";
 
     PipelinedLoaderConfig config;
     config.io_threads = 2;
-    config.cold_process_threads = 4;  // More threads for large images
+    config.cold_process_threads = 4; // More threads for large images
     config.prefetch_count = 32;
     config.jpeg_batch_size = 8;
-    config.max_cache_bytes = 2ULL * 1024 * 1024 * 1024;  // 2GB cache
+    config.max_cache_bytes = 2ULL * 1024 * 1024 * 1024; // 2GB cache
 
     std::cout << "Config:\n";
     std::cout << "  IO threads:        " << config.io_threads << "\n";
     std::cout << "  Cold threads:      " << config.cold_process_threads << "\n";
     std::cout << "  Prefetch count:    " << config.prefetch_count << "\n";
-    std::cout << "  Cache size:        " << (config.max_cache_bytes / (1024*1024)) << " MB\n\n";
+    std::cout << "  Cache size:        " << (config.max_cache_bytes / (1024 * 1024)) << " MB\n\n";
 
     // =========================================================================
     // Benchmark 1: Full dataset cold pass (with max_width)
@@ -2154,7 +2156,7 @@ TEST(PipelinedLoaderBenchmark, WOW_DD_LargeDataset) {
     // Prefetch all again
     for (size_t i = 0; i < all_pairs.size(); ++i) {
         ImageRequest req;
-        req.sequence_id = i + 10000;  // Different seq IDs
+        req.sequence_id = i + 10000; // Different seq IDs
         req.path = all_pairs[i].first;
         req.params.resize_factor = 1;
         req.params.max_width = max_width;

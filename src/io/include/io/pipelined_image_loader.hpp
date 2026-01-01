@@ -55,8 +55,8 @@ namespace lfs::io {
      * @brief Parameters for mask processing
      */
     struct MaskParams {
-        bool invert = false;       // Invert mask values (1.0 - mask)
-        float threshold = 0.0f;    // Binary threshold: >= threshold → 1.0, else → 0.0
+        bool invert = false;    // Invert mask values (1.0 - mask)
+        float threshold = 0.0f; // Binary threshold: >= threshold → 1.0, else → 0.0
     };
 
     struct ImageRequest {
@@ -70,8 +70,8 @@ namespace lfs::io {
 
     struct ReadyImage {
         size_t sequence_id;
-        lfs::core::Tensor tensor;                    // Image tensor [C,H,W], float32
-        std::optional<lfs::core::Tensor> mask;       // Optional mask [H,W], float32
+        lfs::core::Tensor tensor;              // Image tensor [C,H,W], float32
+        std::optional<lfs::core::Tensor> mask; // Optional mask [H,W], float32
         cudaStream_t stream = nullptr;
     };
 
@@ -128,8 +128,8 @@ namespace lfs::io {
             bool is_original_jpeg = false;
             bool needs_processing = false;
             // Mask-specific fields
-            bool is_mask = false;            // True if this item is a mask (not an image)
-            MaskParams mask_params;          // Invert/threshold params (only used if is_mask)
+            bool is_mask = false;   // True if this item is a mask (not an image)
+            MaskParams mask_params; // Invert/threshold params (only used if is_mask)
         };
 
         // Pairing buffer: wait for both image and mask before output
@@ -137,7 +137,7 @@ namespace lfs::io {
             std::optional<lfs::core::Tensor> image;
             std::optional<lfs::core::Tensor> mask;
             cudaStream_t stream = nullptr;
-            bool mask_expected = false;      // True if a mask was requested for this sequence_id
+            bool mask_expected = false; // True if a mask was requested for this sequence_id
         };
 
         template <typename T>

@@ -674,7 +674,7 @@ namespace lfs::io {
         if (needs_resize) {
             if (is_grayscale) {
                 output_tensor = lanczos_resize_grayscale(uint8_tensor, target_height, target_width,
-                                                          LANCZOS_KERNEL_SIZE, static_cast<cudaStream_t>(cuda_stream));
+                                                         LANCZOS_KERNEL_SIZE, static_cast<cudaStream_t>(cuda_stream));
             } else {
                 output_tensor = lanczos_resize(uint8_tensor, target_height, target_width,
                                                LANCZOS_KERNEL_SIZE, static_cast<cudaStream_t>(cuda_stream));

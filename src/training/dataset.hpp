@@ -151,8 +151,8 @@ namespace lfs::training {
     /// Dataset example type
     struct CameraExample {
         CameraWithImage data;
-        lfs::core::Tensor target;                     // Empty tensor, not used
-        std::optional<lfs::core::Tensor> mask;        // Optional mask [H,W], float32
+        lfs::core::Tensor target;              // Empty tensor, not used
+        std::optional<lfs::core::Tensor> mask; // Optional mask [H,W], float32
     };
 
     /// Camera dataset configuration
@@ -502,9 +502,9 @@ namespace lfs::training {
 
     /// Configuration for mask loading in PipelinedDataLoader
     struct PipelinedMaskConfig {
-        bool load_masks = false;         // Whether to load masks alongside images
-        bool invert_masks = false;       // Invert mask values (1.0 - mask)
-        float mask_threshold = 0.0f;     // If > 0, values >= threshold become 1.0
+        bool load_masks = false;     // Whether to load masks alongside images
+        bool invert_masks = false;   // Invert mask values (1.0 - mask)
+        float mask_threshold = 0.0f; // If > 0, values >= threshold become 1.0
     };
 
     // Pipelined DataLoader with GPU batch JPEG decoding

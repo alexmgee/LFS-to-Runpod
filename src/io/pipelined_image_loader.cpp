@@ -349,20 +349,22 @@ namespace lfs::io {
         std::lock_guard<std::mutex> lock(pending_pairs_mutex_);
         auto& pair = pending_pairs_[sequence_id];
 
-        if (image) pair.image = std::move(*image);
-        if (mask) pair.mask = std::move(*mask);
-        if (stream) pair.stream = stream;
+        if (image)
+            pair.image = std::move(*image);
+        if (mask)
+            pair.mask = std::move(*mask);
+        if (stream)
+            pair.stream = stream;
 
         const bool image_ready = pair.image.has_value();
         const bool mask_has_value = pair.mask.has_value();
         const bool mask_ready = !pair.mask_expected || mask_has_value;
 
         if (image_ready && mask_ready) {
-            output_queue_.push({
-                sequence_id,
-                std::move(*pair.image),
-                mask_has_value ? std::optional(std::move(*pair.mask)) : std::nullopt,
-                pair.stream});
+            output_queue_.push({sequence_id,
+                                std::move(*pair.image),
+                                mask_has_value ? std::optional(std::move(*pair.mask)) : std::nullopt,
+                                pair.stream});
             pending_pairs_.erase(sequence_id);
 
             std::lock_guard<std::mutex> stats_lock(stats_mutex_);
@@ -840,11 +842,10 @@ namespace lfs::io {
                         it->second.mask_expected = false;
                         // If image is already ready, deliver it now
                         if (it->second.image.has_value()) {
-                            output_queue_.push({
-                                item.sequence_id,
-                                std::move(*it->second.image),
-                                std::nullopt,
-                                it->second.stream});
+                            output_queue_.push({item.sequence_id,
+                                                std::move(*it->second.image),
+                                                std::nullopt,
+                                                it->second.stream});
                             pending_pairs_.erase(it);
                         }
                     }
