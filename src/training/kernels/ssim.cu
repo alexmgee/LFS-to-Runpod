@@ -2,9 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
+#include "core/tensor/internal/cuda_stream_context.hpp"
 #include "lfs/kernels/ssim.cuh"
 #include "lfs/kernels/ssim_reduction.cuh"
-#include "core/tensor/internal/cuda_stream_context.hpp"
 #include <algorithm>
 #include <cooperative_groups.h>
 #include <cuda_runtime.h>
