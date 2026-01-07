@@ -600,9 +600,9 @@ protected:
         // With camera at z=5, focal=100, this projects to pixel ~(32, 32) center of 64x64 image
         std::vector<float> means_data(n_ * 3);
         for (size_t i = 0; i < n_; ++i) {
-            means_data[i * 3] = tiny_offset(gen);      // x: tiny spread
-            means_data[i * 3 + 1] = tiny_offset(gen);  // y: tiny spread
-            means_data[i * 3 + 2] = tiny_offset(gen);  // z: tiny spread
+            means_data[i * 3] = tiny_offset(gen);     // x: tiny spread
+            means_data[i * 3 + 1] = tiny_offset(gen); // y: tiny spread
+            means_data[i * 3 + 2] = tiny_offset(gen); // z: tiny spread
         }
         means_ = Tensor::from_blob(means_data.data(), {n_, 3}, Device::CPU, DataType::Float32).to(Device::CUDA);
 
@@ -611,7 +611,7 @@ protected:
         // Very small gaussians so they all project to the same tile (scale exp(-5) ≈ 0.007)
         scaling_ = Tensor::full({n_, 3}, -5.0f, Device::CUDA);
         rotation_ = Tensor::zeros({n_, 4}, Device::CUDA);
-        rotation_.slice(1, 0, 1).fill_(1.0f);  // Identity rotation (w=1, x=y=z=0)
+        rotation_.slice(1, 0, 1).fill_(1.0f); // Identity rotation (w=1, x=y=z=0)
         opacity_ = Tensor::randn({n_}, Device::CUDA);
 
         // Camera looking at origin from z=5
