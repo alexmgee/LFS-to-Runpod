@@ -496,7 +496,7 @@
     "unlocked": "Déverrouillé : peut être écrasé",
     "point_size": "Taille du Point",
     "scale_camera": "Échelle",
-    "render_sh_degree": "Coefficients SH utilisés pour le rendu (0-3)",
+    "sh_degree": "Coefficients SH utilisés pour le rendu (0-3)",
     "equirectangular": "Rendre en panorama 360°",
     "fov": "Champ de vision de la caméra en degrés",
     "background": "Couleur d'arrière-plan du viewer",

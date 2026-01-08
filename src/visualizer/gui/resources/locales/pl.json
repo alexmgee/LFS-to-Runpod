@@ -496,7 +496,7 @@
     "unlocked": "Odblokowany: może być nadpisany",
     "point_size": "Rozmiar Punktu",
     "scale_camera": "Skala",
-    "render_sh_degree": "Współczynniki SH do renderowania (0-3)",
+    "sh_degree": "Współczynniki SH do renderowania (0-3)",
     "equirectangular": "Renderuj jako panorama 360°",
     "fov": "Pole widzenia kamery w stopniach",
     "background": "Kolor tła przeglądarki",

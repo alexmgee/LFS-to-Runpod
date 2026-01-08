@@ -496,7 +496,7 @@
     "unlocked": "Unlocked: can be overwritten",
     "point_size": "Point Size",
     "scale_camera": "Scale",
-    "render_sh_degree": "SH coefficients used for rendering (0-3)",
+    "sh_degree": "SH coefficients used for rendering (0-3)",
     "equirectangular": "Render as 360° panorama",
     "fov": "Camera field of view in degrees",
     "background": "Viewer background color",

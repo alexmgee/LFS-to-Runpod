@@ -496,7 +496,7 @@
     "unlocked": "已解锁：可以覆盖",
     "point_size": "点大小",
     "scale_camera": "缩放",
-    "render_sh_degree": "用于渲染的SH系数 (0-3)",
+    "sh_degree": "用于渲染的SH系数 (0-3)",
     "equirectangular": "渲染为360°全景",
     "fov": "相机视场角（度）",
     "background": "查看器背景颜色",

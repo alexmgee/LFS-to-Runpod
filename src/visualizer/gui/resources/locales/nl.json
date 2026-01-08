@@ -496,7 +496,7 @@
     "unlocked": "Ontgrendeld: kan overschreven worden",
     "point_size": "Punt Grootte",
     "scale_camera": "Schaal",
-    "render_sh_degree": "SH coëfficiënten voor rendering (0-3)",
+    "sh_degree": "SH coëfficiënten voor rendering (0-3)",
     "equirectangular": "Render als 360° panorama",
     "fov": "Camera gezichtsveld in graden",
     "background": "Viewer achtergrondkleur",

@@ -496,7 +496,7 @@
     "unlocked": "Entsperrt: kann überschrieben werden",
     "point_size": "Punktgröße",
     "scale_camera": "Skalieren",
-    "render_sh_degree": "SH-Koeffizienten für Rendering (0-3)",
+    "sh_degree": "SH-Koeffizienten für Rendering (0-3)",
     "equirectangular": "Als 360° Panorama rendern",
     "fov": "Kamera-Sichtfeld in Grad",
     "background": "Viewer-Hintergrundfarbe",

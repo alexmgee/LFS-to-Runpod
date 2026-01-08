@@ -496,7 +496,7 @@
     "unlocked": "ロック解除: 上書き可能",
     "point_size": "ポイントサイズ",
     "scale_camera": "スケール",
-    "render_sh_degree": "レンダリングに使用するSH係数 (0-3)",
+    "sh_degree": "レンダリングに使用するSH係数 (0-3)",
     "equirectangular": "360°パノラマとしてレンダリング",
     "fov": "カメラの視野角（度）",
     "background": "ビューアの背景色",

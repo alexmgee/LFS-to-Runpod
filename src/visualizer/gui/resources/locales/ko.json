@@ -496,7 +496,7 @@
     "unlocked": "잠금 해제됨: 덮어쓸 수 있음",
     "point_size": "포인트 크기",
     "scale_camera": "크기 조절",
-    "render_sh_degree": "렌더링에 사용되는 SH 계수 (0-3)",
+    "sh_degree": "렌더링에 사용되는 SH 계수 (0-3)",
     "equirectangular": "360° 파노라마로 렌더링",
     "fov": "카메라 시야각 (도)",
     "background": "뷰어 배경색",

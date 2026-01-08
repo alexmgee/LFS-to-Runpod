@@ -496,7 +496,7 @@
     "unlocked": "Sbloccato: può essere sovrascritto",
     "point_size": "Dimensione Punto",
     "scale_camera": "Scala",
-    "render_sh_degree": "Coefficienti SH usati per rendering (0-3)",
+    "sh_degree": "Coefficienti SH usati per rendering (0-3)",
     "equirectangular": "Rendering come panorama 360°",
     "fov": "Campo visivo della fotocamera in gradi",
     "background": "Colore sfondo viewer",
