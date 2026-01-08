@@ -12,7 +12,7 @@
 #include "theme/theme.hpp"
 #include "training/training_manager.hpp"
 #include "visualizer_impl.hpp"
-#include <GL/glew.h>
+#include <glad/glad.h>
 #include <cstdarg>
 #include <imgui.h>
 
