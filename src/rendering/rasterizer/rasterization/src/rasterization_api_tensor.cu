@@ -783,7 +783,6 @@ namespace lfs::rendering {
         auto computed_visible = ComputedVisibleIndices::compute(
             N_total, transform_indices, node_visibility_mask, visibility_mask);
         const bool use_visibility_filter = computed_visible.count > 0;
-        const int M = use_visibility_filter ? static_cast<int>(computed_visible.count) : N_total;
 
         const size_t H = static_cast<size_t>(height);
         const size_t W = static_cast<size_t>(width);

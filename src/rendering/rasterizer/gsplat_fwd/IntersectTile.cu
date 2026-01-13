@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
+#include <thrust/iterator/transform_iterator.h>
 
 #include "Common.h"
 #include "Intersect.h"
@@ -237,9 +238,8 @@ namespace gsplat_fwd {
             return;
         }
 
-        // Use CUB transform iterator for int32→int64 conversion during scan
-        cub::TransformInputIterator<int64_t, cub::CastOp<int64_t>, const int32_t*>
-            cast_iter(input, cub::CastOp<int64_t>());
+        auto cast_op = [] __host__ __device__(int32_t x) { return static_cast<int64_t>(x); };
+        auto cast_iter = thrust::make_transform_iterator(input, cast_op);
 
         CUB_WRAPPER_LFS(
             cub::DeviceScan::InclusiveSum,
