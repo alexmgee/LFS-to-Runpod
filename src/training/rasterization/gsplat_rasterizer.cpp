@@ -531,7 +531,7 @@ namespace lfs::training {
             ctx.sh_degree,
             bg_color_ptr,
             bg_image_ptr, // per-pixel background image
-            nullptr, // masks
+            nullptr,      // masks
             N,
             1, // C
             K,

@@ -251,7 +251,7 @@ namespace lfs::vis::gui {
         }
 
         renderModelsFolder(scene, selected_names);
-        
+
         // Render background settings section
         renderBackgroundSection();
 
@@ -266,7 +266,7 @@ namespace lfs::vis::gui {
     static std::string ellipsizeFilename(const std::string& filename, size_t maxLen) {
         if (filename.length() <= maxLen)
             return filename;
-        
+
         // Find the extension
         const size_t dotPos = filename.rfind('.');
         if (dotPos == std::string::npos || dotPos == 0) {
@@ -275,20 +275,20 @@ namespace lfs::vis::gui {
                 return filename.substr(0, maxLen - 3) + "...";
             return filename.substr(0, maxLen);
         }
-        
+
         const std::string extension = filename.substr(dotPos); // includes the dot
         const std::string baseName = filename.substr(0, dotPos);
-        
+
         // Calculate how much space we have for the base name
         // We need: some_prefix + "..." + extension
         const size_t ellipsisLen = 3;
         const size_t extLen = extension.length();
-        
+
         if (maxLen <= ellipsisLen + extLen + 2) {
             // Not enough space, just show truncated with extension
             return filename.substr(0, 2) + "..." + extension;
         }
-        
+
         const size_t prefixLen = maxLen - ellipsisLen - extLen;
         return baseName.substr(0, prefixLen) + "..." + extension;
     }
@@ -298,26 +298,26 @@ namespace lfs::vis::gui {
         auto* param_manager = services().paramsOrNull();
         if (!param_manager)
             return;
-        
+
         if (const auto result = param_manager->ensureLoaded(); !result)
             return;
-        
+
         const auto& opt_params = param_manager->getActiveParams();
-        
+
         // Only show section if background image mode is selected and an image is set
         if (opt_params.bg_mode != lfs::core::param::BackgroundMode::Image || opt_params.bg_image_path.empty())
             return;
 
         static constexpr ImGuiTreeNodeFlags FOLDER_FLAGS =
             ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow;
-        
+
         const auto& t = theme();
         const float scale = getDpiScale();
         const float ICON_SIZE = 16.0f * scale;
         const ImVec2 icon_sz{ICON_SIZE, ICON_SIZE};
-        
+
         ImGui::Separator();
-        
+
         if (ImGui::TreeNodeEx(LOC(lichtfeld::Strings::Scene::BACKGROUND), FOLDER_FLAGS)) {
             // Draw row background
             const ImVec2 row_min = ImGui::GetCursorScreenPos();
@@ -326,29 +326,29 @@ namespace lfs::vis::gui {
             const float ROW_PADDING = 2.0f * scale;
             const float row_height = ImGui::GetTextLineHeight() + ROW_PADDING;
             ImDrawList* const draw_list = ImGui::GetWindowDrawList();
-            
+
             const ImU32 row_color = (m_rowIndex++ % 2 == 0) ? t.row_even_u32() : t.row_odd_u32();
             draw_list->AddRectFilled(
                 ImVec2(window_left, row_min.y),
                 ImVec2(window_right, row_min.y + row_height),
                 row_color);
-            
+
             // Camera icon (same as images in Cameras section)
             if (m_icons.camera) {
-                ImGui::Image(static_cast<ImTextureID>(m_icons.camera), icon_sz, {0, 0}, {1, 1}, 
-                            ImVec4(0.7f, 0.7f, 0.9f, 0.9f), {0, 0, 0, 0});
+                ImGui::Image(static_cast<ImTextureID>(m_icons.camera), icon_sz, {0, 0}, {1, 1},
+                             ImVec4(0.7f, 0.7f, 0.9f, 0.9f), {0, 0, 0, 0});
                 ImGui::SameLine();
             }
-            
+
             // Get filename and create ellipsized version for display
             const std::string full_name = lfs::core::path_to_utf8(opt_params.bg_image_path.filename());
             const std::string display_name = ellipsizeFilename(full_name, 24);
-            
+
             // Make selectable to allow clicking to view image
             if (ImGui::Selectable(display_name.c_str(), false, ImGuiSelectableFlags_None)) {
                 // Single click - could select
             }
-            
+
             // Double-click to open image preview
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 if (m_imagePreview) {
@@ -358,12 +358,12 @@ namespace lfs::vis::gui {
                     m_showImagePreview = true;
                 }
             }
-            
+
             // Show full path tooltip on hover
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s\n(Double-click to preview)", lfs::core::path_to_utf8(opt_params.bg_image_path).c_str());
             }
-            
+
             // Context menu for the background image
             theme().pushContextMenuStyle();
             if (ImGui::BeginPopupContextItem("##BackgroundImageMenu")) {
@@ -376,7 +376,7 @@ namespace lfs::vis::gui {
                 ImGui::EndPopup();
             }
             Theme::popContextMenuStyle();
-            
+
             ImGui::TreePop();
         }
     }
