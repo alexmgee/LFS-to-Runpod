@@ -81,7 +81,6 @@
     "section.refinement": "Raffinement",
     "section.bilateral_grid": "Paramètres de Grille Bilatérale",
     "section.masking": "Paramètres de Masque",
-    "section.evaluation": "Paramètres d'Évaluation",
     "section.losses": "Paramètres de Perte",
     "section.initialization": "Initialisation",
     "section.thresholds": "Seuils",
@@ -97,7 +96,6 @@
     "dataset.max_width": "Max Width (px):",
     "dataset.cpu_cache": "CPU Cache:",
     "dataset.fs_cache": "FS Cache:",
-    "dataset.test_every": "Test Every:",
     "dataset.output": "Output:",
 
     "opt.strategy": "Strategy:",
@@ -106,7 +104,6 @@
     "opt.sh_degree": "SH Degree:",
     "opt.use_bilateral": "Bilateral Grid:",
     "opt.mask_mode": "Mask Mode:",
-    "opt.enable_eval": "Evaluation:",
     "opt.sparsity": "Sparsity:",
     "opt.gut": "GUT:",
     "opt.mip_filter": "Mip Filter:",
@@ -157,7 +154,6 @@
     "tooltip.sparsity": "Activer l'élagage pour compression du modèle",
     "tooltip.gut": "Traitement unifié pour caméras déformées",
     "tooltip.bg_modulation": "Apprendre couleur d'arrière-plan séparée",
-    "tooltip.evaluation": "Exécuter métriques d'éval pendant entraînement",
     "tooltip.gradient_thr": "Seuil de gradient pour densification",
     "tooltip.opacity_reg": "Poids de régularisation d'opacité",
     "tooltip.scale_reg": "Poids de régularisation d'échelle",
@@ -177,7 +173,6 @@
     "tooltip.max_width": "Largeur maximale de l'image en pixels",
     "tooltip.cpu_cache": "Cacher les images décodées en RAM",
     "tooltip.fs_cache": "Cacher les images décodées sur disque",
-    "tooltip.test_every": "Images de test pour évaluation (chaque N-ème)",
     "tooltip.save_steps": "Itérations pour sauvegarder les checkpoints",
     "tooltip.lr_position": "Taux d'apprentissage pour les positions",
     "tooltip.lr_sh_coeff": "Taux d'apprentissage pour les harmoniques sphériques",
@@ -195,8 +190,6 @@
     "tooltip.save_step_add": "Ajouter un checkpoint à cette itération",
     "tooltip.save_step_remove": "Supprimer ce checkpoint",
 
-    "eval.save_images": "Save Images:",
-    "eval.evaluation_steps": "Evaluation Steps:",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -649,7 +642,6 @@
     "bg_image": "Image:",
     "bg_image_browse": "Parcourir...",
     "bg_image_clear": "Effacer",
-    "evaluation": "Évaluation:",
     "init_opacity": "Init Opacity:",
     "init_scaling": "Init Scaling:",
     "random_init": "Random Init:",
@@ -663,7 +655,6 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "new_eval_step": "New Eval Step",
     "disabled": "Disabled"
   },
 

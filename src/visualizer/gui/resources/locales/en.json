@@ -81,7 +81,6 @@
     "section.refinement": "Refinement",
     "section.bilateral_grid": "Bilateral Grid Settings",
     "section.masking": "Mask Settings",
-    "section.evaluation": "Evaluation Settings",
     "section.losses": "Loss Parameters",
     "section.initialization": "Initialization",
     "section.thresholds": "Thresholds",
@@ -97,7 +96,6 @@
     "dataset.max_width": "Max Width (px):",
     "dataset.cpu_cache": "CPU Cache:",
     "dataset.fs_cache": "FS Cache:",
-    "dataset.test_every": "Test Every:",
     "dataset.output": "Output:",
 
     "opt.strategy": "Strategy:",
@@ -106,7 +104,6 @@
     "opt.sh_degree": "SH Degree:",
     "opt.use_bilateral": "Bilateral Grid:",
     "opt.mask_mode": "Mask Mode:",
-    "opt.enable_eval": "Evaluation:",
     "opt.sparsity": "Sparsity:",
     "opt.gut": "GUT:",
     "opt.mip_filter": "Mip Filter:",
@@ -157,7 +154,6 @@
     "tooltip.sparsity": "Enable pruning for model compression",
     "tooltip.gut": "Unified treatment for distorted cameras",
     "tooltip.bg_modulation": "Learn separate background color",
-    "tooltip.evaluation": "Run eval metrics during training",
     "tooltip.gradient_thr": "Gradient threshold for densification",
     "tooltip.opacity_reg": "Opacity regularization weight",
     "tooltip.scale_reg": "Scale regularization weight",
@@ -177,7 +173,6 @@
     "tooltip.max_width": "Maximum image width in pixels",
     "tooltip.cpu_cache": "Cache decoded images in RAM",
     "tooltip.fs_cache": "Cache decoded images on disk",
-    "tooltip.test_every": "Holdout images for evaluation (every Nth)",
     "tooltip.save_steps": "Iterations at which to save checkpoints",
     "tooltip.lr_position": "Learning rate for Gaussian positions",
     "tooltip.lr_sh_coeff": "Learning rate for spherical harmonics",
@@ -194,9 +189,6 @@
     "tooltip.save_step_input": "Iteration number (+/- to adjust)",
     "tooltip.save_step_add": "Add checkpoint at this iteration",
     "tooltip.save_step_remove": "Remove this checkpoint",
-
-    "eval.save_images": "Save Images:",
-    "eval.evaluation_steps": "Evaluation Steps:",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -663,7 +655,6 @@
     "bg_image": "Image:",
     "bg_image_browse": "Browse...",
     "bg_image_clear": "Clear",
-    "evaluation": "Evaluation:",
     "init_opacity": "Init Opacity:",
     "init_scaling": "Init Scaling:",
     "random_init": "Random Init:",
@@ -677,7 +668,6 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "new_eval_step": "New Eval Step",
     "disabled": "Disabled"
   },
 

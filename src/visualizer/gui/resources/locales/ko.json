@@ -81,7 +81,6 @@
     "section.refinement": "정제",
     "section.bilateral_grid": "양방향 그리드 설정",
     "section.masking": "마스크 설정",
-    "section.evaluation": "평가 설정",
     "section.losses": "손실 파라미터",
     "section.initialization": "초기화",
     "section.thresholds": "임계값",
@@ -97,7 +96,6 @@
     "dataset.max_width": "Max Width (px):",
     "dataset.cpu_cache": "CPU Cache:",
     "dataset.fs_cache": "FS Cache:",
-    "dataset.test_every": "Test Every:",
     "dataset.output": "Output:",
 
     "opt.strategy": "Strategy:",
@@ -106,7 +104,6 @@
     "opt.sh_degree": "SH Degree:",
     "opt.use_bilateral": "Bilateral Grid:",
     "opt.mask_mode": "Mask Mode:",
-    "opt.enable_eval": "Evaluation:",
     "opt.sparsity": "Sparsity:",
     "opt.gut": "GUT:",
     "opt.mip_filter": "Mip Filter:",
@@ -157,7 +154,6 @@
     "tooltip.sparsity": "모델 압축을 위한 가지치기 활성화",
     "tooltip.gut": "왜곡 카메라 통합 처리",
     "tooltip.bg_modulation": "별도 배경색 학습",
-    "tooltip.evaluation": "학습 중 평가 메트릭 실행",
     "tooltip.gradient_thr": "밀도화 그래디언트 임계값",
     "tooltip.opacity_reg": "불투명도 정규화 가중치",
     "tooltip.scale_reg": "스케일 정규화 가중치",
@@ -177,7 +173,6 @@
     "tooltip.max_width": "최대 이미지 너비 (픽셀)",
     "tooltip.cpu_cache": "디코딩된 이미지 RAM 캐시",
     "tooltip.fs_cache": "디코딩된 이미지 디스크 캐시",
-    "tooltip.test_every": "평가용 홀드아웃 이미지 (N번째마다)",
     "tooltip.save_steps": "체크포인트 저장 반복 횟수",
     "tooltip.lr_position": "가우시안 위치 학습률",
     "tooltip.lr_sh_coeff": "구면 조화 함수 학습률",
@@ -195,8 +190,6 @@
     "tooltip.save_step_add": "이 반복에 체크포인트 추가",
     "tooltip.save_step_remove": "이 체크포인트 삭제",
 
-    "eval.save_images": "Save Images:",
-    "eval.evaluation_steps": "Evaluation Steps:",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -649,7 +642,6 @@
     "bg_image": "이미지:",
     "bg_image_browse": "찾아보기...",
     "bg_image_clear": "지우기",
-    "evaluation": "평가:",
     "init_opacity": "Init Opacity:",
     "init_scaling": "Init Scaling:",
     "random_init": "Random Init:",
@@ -663,7 +655,6 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "new_eval_step": "New Eval Step",
     "disabled": "Disabled"
   },
 

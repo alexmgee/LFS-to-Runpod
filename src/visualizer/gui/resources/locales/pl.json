@@ -81,7 +81,6 @@
     "section.refinement": "Udoskonalenie",
     "section.bilateral_grid": "Ustawienia Siatki Dwustronnej",
     "section.masking": "Ustawienia Maski",
-    "section.evaluation": "Ustawienia Ewaluacji",
     "section.losses": "Parametry Strat",
     "section.initialization": "Inicjalizacja",
     "section.thresholds": "Progi",
@@ -97,7 +96,6 @@
     "dataset.max_width": "Max Width (px):",
     "dataset.cpu_cache": "CPU Cache:",
     "dataset.fs_cache": "FS Cache:",
-    "dataset.test_every": "Test Every:",
     "dataset.output": "Output:",
 
     "opt.strategy": "Strategy:",
@@ -106,7 +104,6 @@
     "opt.sh_degree": "SH Degree:",
     "opt.use_bilateral": "Bilateral Grid:",
     "opt.mask_mode": "Mask Mode:",
-    "opt.enable_eval": "Evaluation:",
     "opt.sparsity": "Sparsity:",
     "opt.gut": "GUT:",
     "opt.mip_filter": "Mip Filter:",
@@ -157,7 +154,6 @@
     "tooltip.sparsity": "Włącz przycinanie dla kompresji modelu",
     "tooltip.gut": "Jednolite traktowanie zniekształconych kamer",
     "tooltip.bg_modulation": "Naucz osobnego koloru tła",
-    "tooltip.evaluation": "Uruchom metryki ewaluacji podczas treningu",
     "tooltip.gradient_thr": "Próg gradientu dla zagęszczania",
     "tooltip.opacity_reg": "Waga regularyzacji nieprzezroczystości",
     "tooltip.scale_reg": "Waga regularyzacji skali",
@@ -177,7 +173,6 @@
     "tooltip.max_width": "Maksymalna szerokość obrazu w pikselach",
     "tooltip.cpu_cache": "Cache zdekodowanych obrazów w RAM",
     "tooltip.fs_cache": "Cache zdekodowanych obrazów na dysku",
-    "tooltip.test_every": "Obrazy holdout do ewaluacji (co N-ty)",
     "tooltip.save_steps": "Iteracje do zapisu checkpointów",
     "tooltip.lr_position": "Tempo uczenia dla pozycji",
     "tooltip.lr_sh_coeff": "Tempo uczenia dla harmonik sferycznych",
@@ -195,8 +190,6 @@
     "tooltip.save_step_add": "Dodaj checkpoint przy tej iteracji",
     "tooltip.save_step_remove": "Usuń ten checkpoint",
 
-    "eval.save_images": "Save Images:",
-    "eval.evaluation_steps": "Evaluation Steps:",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -649,7 +642,6 @@
     "bg_image": "Obraz:",
     "bg_image_browse": "Przeglądaj...",
     "bg_image_clear": "Wyczyść",
-    "evaluation": "Ewaluacja:",
     "init_opacity": "Init Opacity:",
     "init_scaling": "Init Scaling:",
     "random_init": "Random Init:",
@@ -663,7 +655,6 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "new_eval_step": "New Eval Step",
     "disabled": "Disabled"
   },
 

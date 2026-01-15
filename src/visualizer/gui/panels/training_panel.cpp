@@ -240,27 +240,6 @@ namespace lfs::vis::gui::panels {
                     widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::FS_CACHE));
                 }
 
-                if (opt_params.enable_eval) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", LOC(Training::Dataset::TEST_EVERY));
-                    ImGui::TableNextColumn();
-                    if (can_edit) {
-                        ImGui::PushItemWidth(-1);
-                        if (ImGui::InputInt("##test_every", &dataset_params.test_every, 100, 500)) {
-                            if (dataset_params.test_every > 0 && dataset_params.test_every <= 10000) {
-                                dataset_params_changed = true;
-                            }
-                        }
-                        ImGui::PopItemWidth();
-                    } else {
-                        ImGui::Text("%d", dataset_params.test_every);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::TEST_EVERY));
-                    }
-                }
-
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(Training::Dataset::OUTPUT));
@@ -701,82 +680,6 @@ namespace lfs::vis::gui::panels {
                 }
 
                 ImGui::EndTable();
-            }
-            ImGui::TreePop();
-        }
-
-        // Evaluation Settings
-        if (opt_params.enable_eval && ImGui::TreeNode(LOC(Training::Section::EVALUATION))) {
-            if (ImGui::BeginTable("EvalTable", 2, ImGuiTableFlags_SizingStretchProp)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", LOC(Training::Eval::SAVE_IMAGES));
-                ImGui::TableNextColumn();
-                if (can_edit) {
-                    ImGui::Checkbox("##enable_save_eval_images", &opt_params.enable_save_eval_images);
-                } else {
-                    ImGui::Text("%s", opt_params.enable_save_eval_images ? LOC(Training::Status::YES) : LOC(Training::Status::NO));
-                }
-
-                ImGui::EndTable();
-            }
-
-            // Eval Steps
-            {
-                ImGui::Separator();
-                ImGui::Text("%s", LOC(Training::Eval::EVALUATION_STEPS));
-                if (can_edit) {
-                    static int new_eval_step = 7000;
-                    ImGui::InputInt(LOC(TrainingParams::NEW_EVAL_STEP), &new_eval_step, 1000, 5000);
-                    ImGui::SameLine();
-                    if (ImGui::Button(LOC(Training::Button::ADD))) {
-                        if (new_eval_step > 0 && std::find(opt_params.eval_steps.begin(),
-                                                           opt_params.eval_steps.end(),
-                                                           new_eval_step) == opt_params.eval_steps.end()) {
-                            opt_params.eval_steps.push_back(new_eval_step);
-                            std::sort(opt_params.eval_steps.begin(), opt_params.eval_steps.end());
-                        }
-                    }
-
-                    for (size_t i = 0; i < opt_params.eval_steps.size(); ++i) {
-                        ImGui::PushID(static_cast<int>(i + 1000));
-
-                        int step = static_cast<int>(opt_params.eval_steps[i]);
-                        ImGui::SetNextItemWidth(100 * getDpiScale());
-                        if (ImGui::InputInt("##eval_step", &step, 0, 0)) {
-                            if (step > 0) {
-                                opt_params.eval_steps[i] = static_cast<size_t>(step);
-                                std::sort(opt_params.eval_steps.begin(), opt_params.eval_steps.end());
-                            }
-                        }
-
-                        ImGui::SameLine();
-                        if (ImGui::Button(LOC(Training::Button::REMOVE))) {
-                            opt_params.eval_steps.erase(opt_params.eval_steps.begin() + i);
-                        }
-
-                        ImGui::PopID();
-                    }
-
-                    if (opt_params.eval_steps.empty()) {
-                        ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No eval steps configured");
-                    }
-                } else {
-                    if (!opt_params.eval_steps.empty()) {
-                        std::string steps_str;
-                        for (size_t i = 0; i < opt_params.eval_steps.size(); ++i) {
-                            if (i > 0)
-                                steps_str += ", ";
-                            steps_str += std::to_string(opt_params.eval_steps[i]);
-                        }
-                        ImGui::Text("%s", steps_str.c_str());
-                    } else {
-                        ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No eval steps");
-                    }
-                }
             }
             ImGui::TreePop();
         }
@@ -1520,20 +1423,6 @@ namespace lfs::vis::gui::panels {
             }
             if (ImGui::IsItemHovered()) {
                 widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::BG_MODULATION));
-            }
-
-            // Evaluation
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::Text("%s", LOC(TrainingParams::EVALUATION));
-            ImGui::TableNextColumn();
-            if (can_edit) {
-                ImGui::Checkbox("##enable_eval", &opt_params.enable_eval);
-            } else {
-                ImGui::Text("%s", opt_params.enable_eval ? "Enabled" : "Disabled");
-            }
-            if (ImGui::IsItemHovered()) {
-                widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::EVALUATION));
             }
         }
         ImGui::EndTable();

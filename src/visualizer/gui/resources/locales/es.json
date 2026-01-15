@@ -81,7 +81,6 @@
     "section.refinement": "Refinamiento",
     "section.bilateral_grid": "Configuración de Cuadrícula Bilateral",
     "section.masking": "Configuración de Máscara",
-    "section.evaluation": "Configuración de Evaluación",
     "section.losses": "Parámetros de Pérdida",
     "section.initialization": "Inicialización",
     "section.thresholds": "Umbrales",
@@ -97,7 +96,6 @@
     "dataset.max_width": "Max Width (px):",
     "dataset.cpu_cache": "CPU Cache:",
     "dataset.fs_cache": "FS Cache:",
-    "dataset.test_every": "Test Every:",
     "dataset.output": "Output:",
 
     "opt.strategy": "Strategy:",
@@ -106,7 +104,6 @@
     "opt.sh_degree": "SH Degree:",
     "opt.use_bilateral": "Bilateral Grid:",
     "opt.mask_mode": "Mask Mode:",
-    "opt.enable_eval": "Evaluation:",
     "opt.sparsity": "Sparsity:",
     "opt.gut": "GUT:",
     "opt.mip_filter": "Mip Filter:",
@@ -157,7 +154,6 @@
     "tooltip.sparsity": "Habilitar poda para compresión del modelo",
     "tooltip.gut": "Tratamiento unificado para cámaras distorsionadas",
     "tooltip.bg_modulation": "Aprender color de fondo separado",
-    "tooltip.evaluation": "Ejecutar métricas de evaluación durante entrenamiento",
     "tooltip.gradient_thr": "Umbral de gradiente para densificación",
     "tooltip.opacity_reg": "Peso de regularización de opacidad",
     "tooltip.scale_reg": "Peso de regularización de escala",
@@ -177,7 +173,6 @@
     "tooltip.max_width": "Ancho máximo de imagen en píxeles",
     "tooltip.cpu_cache": "Cachear imágenes decodificadas en RAM",
     "tooltip.fs_cache": "Cachear imágenes decodificadas en disco",
-    "tooltip.test_every": "Imágenes de prueba para evaluación (cada N-ésima)",
     "tooltip.save_steps": "Iteraciones para guardar checkpoints",
     "tooltip.lr_position": "Tasa de aprendizaje para posiciones",
     "tooltip.lr_sh_coeff": "Tasa de aprendizaje para armónicos esféricos",
@@ -195,8 +190,6 @@
     "tooltip.save_step_add": "Añadir checkpoint en esta iteración",
     "tooltip.save_step_remove": "Eliminar este checkpoint",
 
-    "eval.save_images": "Save Images:",
-    "eval.evaluation_steps": "Evaluation Steps:",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -649,7 +642,6 @@
     "bg_image": "Imagen:",
     "bg_image_browse": "Explorar...",
     "bg_image_clear": "Limpiar",
-    "evaluation": "Evaluación:",
     "init_opacity": "Init Opacity:",
     "init_scaling": "Init Scaling:",
     "random_init": "Random Init:",
@@ -663,7 +655,6 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "new_eval_step": "New Eval Step",
     "disabled": "Disabled"
   },
 

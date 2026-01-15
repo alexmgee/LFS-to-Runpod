@@ -81,7 +81,6 @@
     "section.refinement": "细化",
     "section.bilateral_grid": "双边网格设置",
     "section.masking": "掩码设置",
-    "section.evaluation": "评估设置",
     "section.losses": "损失参数",
     "section.initialization": "初始化",
     "section.thresholds": "阈值",
@@ -97,7 +96,6 @@
     "dataset.max_width": "Max Width (px):",
     "dataset.cpu_cache": "CPU Cache:",
     "dataset.fs_cache": "FS Cache:",
-    "dataset.test_every": "Test Every:",
     "dataset.output": "Output:",
 
     "opt.strategy": "Strategy:",
@@ -106,7 +104,6 @@
     "opt.sh_degree": "SH Degree:",
     "opt.use_bilateral": "Bilateral Grid:",
     "opt.mask_mode": "Mask Mode:",
-    "opt.enable_eval": "Evaluation:",
     "opt.sparsity": "Sparsity:",
     "opt.gut": "GUT:",
     "opt.mip_filter": "Mip Filter:",
@@ -157,7 +154,6 @@
     "tooltip.sparsity": "启用剪枝进行模型压缩",
     "tooltip.gut": "畸变相机统一处理",
     "tooltip.bg_modulation": "学习单独的背景颜色",
-    "tooltip.evaluation": "训练期间运行评估指标",
     "tooltip.gradient_thr": "密度化梯度阈值",
     "tooltip.opacity_reg": "不透明度正则化权重",
     "tooltip.scale_reg": "缩放正则化权重",
@@ -177,7 +173,6 @@
     "tooltip.max_width": "最大图像宽度（像素）",
     "tooltip.cpu_cache": "将解码图像缓存到RAM",
     "tooltip.fs_cache": "将解码图像缓存到磁盘",
-    "tooltip.test_every": "评估用保留图像（每第N张）",
     "tooltip.save_steps": "保存检查点的迭代次数",
     "tooltip.lr_position": "高斯位置学习率",
     "tooltip.lr_sh_coeff": "球谐函数学习率",
@@ -195,8 +190,6 @@
     "tooltip.save_step_add": "在此迭代添加检查点",
     "tooltip.save_step_remove": "删除此检查点",
 
-    "eval.save_images": "Save Images:",
-    "eval.evaluation_steps": "Evaluation Steps:",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -649,7 +642,6 @@
     "bg_image": "图像:",
     "bg_image_browse": "浏览...",
     "bg_image_clear": "清除",
-    "evaluation": "评估:",
     "init_opacity": "Init Opacity:",
     "init_scaling": "Init Scaling:",
     "random_init": "Random Init:",
@@ -663,7 +655,6 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "new_eval_step": "New Eval Step",
     "disabled": "Disabled"
   },
 
