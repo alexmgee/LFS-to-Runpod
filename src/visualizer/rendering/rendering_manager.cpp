@@ -28,7 +28,7 @@ namespace lfs::vis {
 
     namespace {
         constexpr int GPU_ALIGNMENT = 16; // 16-pixel alignment for GPU texture efficiency
-    } // namespace
+    }                                     // namespace
 
     using namespace lfs::core::events;
 
@@ -1677,7 +1677,7 @@ namespace lfs::vis {
     }
 
     void RenderingManager::applyCropFilter(lfs::core::Tensor& selection) {
-        if (!selection.is_valid() || !settings_.crop_filter_for_selection)
+        if (!selection.is_valid())
             return;
 
         auto* const sm = services().sceneOrNull();

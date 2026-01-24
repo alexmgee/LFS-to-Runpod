@@ -883,8 +883,8 @@ namespace lfs::vis::gui {
         if (selection_tool && selection_tool->isEnabled() && !ui_hidden_) {
             selection_tool->renderUI(ctx, nullptr);
 
-            // Mini-toolbar for gizmo operation when crop filter is enabled
-            if (selection_tool->isCropFilterEnabled()) {
+            // Mini-toolbar for gizmo operation when crop box is selected
+            if (selection_tool->isCropBoxSelected()) {
                 renderCropGizmoMiniToolbar(ctx);
             }
         }
@@ -2080,17 +2080,8 @@ namespace lfs::vis::gui {
         NodeId cropbox_id = NULL_NODE;
         const SceneNode* cropbox_node = nullptr;
 
-        const auto* const selection_tool = ctx.viewer->getSelectionTool();
-        const bool crop_filter_active = selection_tool && selection_tool->isEnabled() &&
-                                        selection_tool->isCropFilterEnabled();
-
         if (scene_manager->getSelectedNodeType() == NodeType::CROPBOX) {
             cropbox_id = scene_manager->getSelectedNodeCropBoxId();
-        } else if (crop_filter_active) {
-            const auto& visible = scene_manager->getScene().getVisibleCropBoxes();
-            if (!visible.empty()) {
-                cropbox_id = visible[0].node_id;
-            }
         }
 
         if (cropbox_id == NULL_NODE)
@@ -2351,17 +2342,8 @@ namespace lfs::vis::gui {
         NodeId ellipsoid_id = NULL_NODE;
         const SceneNode* ellipsoid_node = nullptr;
 
-        const auto* const selection_tool = ctx.viewer->getSelectionTool();
-        const bool crop_filter_active = selection_tool && selection_tool->isEnabled() &&
-                                        selection_tool->isCropFilterEnabled();
-
         if (scene_manager->getSelectedNodeType() == NodeType::ELLIPSOID) {
             ellipsoid_id = scene_manager->getSelectedNodeEllipsoidId();
-        } else if (crop_filter_active) {
-            const auto& visible = scene_manager->getScene().getVisibleEllipsoids();
-            if (!visible.empty()) {
-                ellipsoid_id = visible[0].node_id;
-            }
         }
 
         if (ellipsoid_id == NULL_NODE)

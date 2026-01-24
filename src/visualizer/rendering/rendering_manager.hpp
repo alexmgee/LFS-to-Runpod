@@ -102,9 +102,6 @@ namespace lfs::vis {
         glm::vec3 depth_filter_min = glm::vec3(-50.0f, -10000.0f, 0.0f);
         glm::vec3 depth_filter_max = glm::vec3(50.0f, 10000.0f, 100.0f);
         lfs::geometry::EuclideanTransform depth_filter_transform;
-
-        // Crop filter for selection (use scene crop box/ellipsoid as selection filter)
-        bool crop_filter_for_selection = false;
     };
 
     struct SplitViewInfo {

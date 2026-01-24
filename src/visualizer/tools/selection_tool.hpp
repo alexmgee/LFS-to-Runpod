@@ -47,9 +47,8 @@ namespace lfs::vis::tools {
         [[nodiscard]] bool isDepthFilterEnabled() const { return depth_filter_enabled_; }
         void resetDepthFilter();
 
-        // Crop filter (use scene crop box/ellipsoid as selection filter)
-        [[nodiscard]] bool isCropFilterEnabled() const { return crop_filter_enabled_; }
-        void setCropFilterEnabled(bool enabled);
+        // Check if crop box or ellipsoid is selected (disables brush painting)
+        [[nodiscard]] bool isCropBoxSelected() const;
 
         // Input bindings
         void setInputBindings(const input::InputBindings* bindings) { input_bindings_ = bindings; }
@@ -119,10 +118,6 @@ namespace lfs::vis::tools {
         bool depth_filter_enabled_ = false;
         float depth_far_ = 100.0f;
         float frustum_half_width_ = 50.0f;
-
-        // ========== Crop Filter ==========
-        bool crop_filter_enabled_ = false;
-        std::string node_before_crop_filter_; // Node to restore when disabling crop filter
 
         static constexpr float DEPTH_MIN = 0.01f;
         static constexpr float DEPTH_MAX = 1000.0f;

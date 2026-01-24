@@ -791,9 +791,9 @@ namespace lfs::rendering {
 
         if (crop_transform && crop_min && crop_max) {
             const float* const c = crop_transform;
-            const float lx = c[0] * pos.x + c[1] * pos.y + c[2] * pos.z + c[3];
-            const float ly = c[4] * pos.x + c[5] * pos.y + c[6] * pos.z + c[7];
-            const float lz = c[8] * pos.x + c[9] * pos.y + c[10] * pos.z + c[11];
+            const float lx = c[0] * pos.x + c[4] * pos.y + c[8] * pos.z + c[12];
+            const float ly = c[1] * pos.x + c[5] * pos.y + c[9] * pos.z + c[13];
+            const float lz = c[2] * pos.x + c[6] * pos.y + c[10] * pos.z + c[14];
 
             const float3 bmin = *crop_min;
             const float3 bmax = *crop_max;
@@ -809,9 +809,9 @@ namespace lfs::rendering {
 
         if (ellipsoid_transform && ellipsoid_radii) {
             const float* const e = ellipsoid_transform;
-            const float lx = e[0] * pos.x + e[1] * pos.y + e[2] * pos.z + e[3];
-            const float ly = e[4] * pos.x + e[5] * pos.y + e[6] * pos.z + e[7];
-            const float lz = e[8] * pos.x + e[9] * pos.y + e[10] * pos.z + e[11];
+            const float lx = e[0] * pos.x + e[4] * pos.y + e[8] * pos.z + e[12];
+            const float ly = e[1] * pos.x + e[5] * pos.y + e[9] * pos.z + e[13];
+            const float lz = e[2] * pos.x + e[6] * pos.y + e[10] * pos.z + e[14];
 
             const float3 r = *ellipsoid_radii;
             const float norm = (lx * lx) / (r.x * r.x) + (ly * ly) / (r.y * r.y) + (lz * lz) / (r.z * r.z);
