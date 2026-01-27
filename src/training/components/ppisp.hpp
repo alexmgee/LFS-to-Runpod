@@ -7,6 +7,7 @@
 #include <cmath>
 #include <istream>
 #include <ostream>
+#include <unordered_map>
 
 namespace lfs::training {
 
@@ -63,10 +64,30 @@ namespace lfs::training {
     public:
         using Config = PPISPConfig;
 
-        PPISP(int num_cameras, int num_frames, int total_iterations, Config config = {});
+        explicit PPISP(int total_iterations, Config config = {});
+
+        /// Register a frame with its camera assignment (call before finalize)
+        void register_frame(int uid, int camera_id);
+
+        /// Finalize registration and allocate tensors (must call after all register_frame calls)
+        void finalize();
+
+        /// Check if a frame UID is registered
+        bool is_known_frame(int uid) const;
+
+        /// Check if a camera ID is registered
+        bool is_known_camera(int camera_id) const;
+
+        /// Get the camera ID for a registered frame
+        int camera_for_frame(int uid) const;
+
+        /// Get contiguous camera index (for controller pool integration)
+        int camera_index(int camera_id) const;
 
         /// Forward pass: apply ISP pipeline (exposure, vignetting, color correction, CRF)
-        lfs::core::Tensor apply(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx);
+        /// @param camera_id Original COLMAP camera_id (translated internally)
+        /// @param uid Original frame UID (translated internally)
+        lfs::core::Tensor apply(const lfs::core::Tensor& rgb, int camera_id, int uid);
 
         /// Apply ISP with controller-predicted params (for novel view synthesis)
         /// @param rgb input image [C,H,W]
@@ -84,12 +105,16 @@ namespace lfs::training {
 
         /// Apply ISP with user-controlled overrides (for viewport preview)
         /// Full control over all PPISP parameters as described in paper Section 4 and Supplementary D
-        lfs::core::Tensor apply_with_overrides(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx,
+        /// @param camera_id Original COLMAP camera_id (translated internally)
+        /// @param uid Original frame UID (translated internally)
+        lfs::core::Tensor apply_with_overrides(const lfs::core::Tensor& rgb, int camera_id, int uid,
                                                const PPISPRenderOverrides& overrides);
 
         /// Backward pass: accumulate gradients (call optimizer_step after all backward calls)
-        lfs::core::Tensor backward(const lfs::core::Tensor& rgb, const lfs::core::Tensor& grad_output, int camera_idx,
-                                   int frame_idx);
+        /// @param camera_id Original COLMAP camera_id (translated internally)
+        /// @param uid Original frame UID (translated internally)
+        lfs::core::Tensor backward(const lfs::core::Tensor& rgb, const lfs::core::Tensor& grad_output, int camera_id,
+                                   int uid);
 
         /// Compute regularization loss (returns GPU tensor for async accumulation)
         lfs::core::Tensor reg_loss_gpu();
@@ -115,7 +140,8 @@ namespace lfs::training {
 
         /// Get learned parameters for a specific frame as [1,9] tensor
         /// Returns: [exposure, color_params[0:8]] for distillation target
-        lfs::core::Tensor get_params_for_frame(int frame_idx) const;
+        /// @param uid Original frame UID (translated internally)
+        lfs::core::Tensor get_params_for_frame(int uid) const;
 
         // Serialization (full state for checkpoints)
         void serialize(std::ostream& os) const;
@@ -132,6 +158,11 @@ namespace lfs::training {
             bc1_rcp = static_cast<float>(1.0 / bc1);
             bc2_sqrt_rcp = static_cast<float>(1.0 / std::sqrt(bc2));
         }
+
+        int translate_camera(int camera_id) const;
+        int translate_frame(int uid) const;
+
+        void allocate_tensors();
 
         // Parameter tensors (all on GPU)
         // Exposure: [num_frames] - per-frame exposure in log-space
@@ -166,8 +197,14 @@ namespace lfs::training {
         double current_lr_;
         double initial_lr_;
         int total_iterations_;
-        int num_cameras_;
-        int num_frames_;
+        int num_cameras_ = 0;
+        int num_frames_ = 0;
+
+        // ID translation maps
+        std::unordered_map<int, int> camera_id_to_idx_;
+        std::unordered_map<int, int> uid_to_frame_idx_;
+        std::unordered_map<int, int> uid_to_camera_id_;
+        bool finalized_ = false;
 
         // ZCA pinv block-diagonal matrix for color mean regularization [8x8]
         lfs::core::Tensor color_pinv_block_diag_;

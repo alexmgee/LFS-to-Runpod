@@ -277,9 +277,6 @@ namespace lfs::training {
 
         // PPISP for physically-plausible ISP appearance modeling (optional)
         std::unique_ptr<PPISP> ppisp_;
-        std::unordered_map<int, int> ppisp_camera_id_to_idx_;  // COLMAP camera_id -> contiguous index
-        std::unordered_map<int, int> ppisp_uid_to_camera_idx_; // uid (frame index) -> ppisp camera index
-        int ppisp_num_cameras_ = 0;                            // Number of unique physical cameras
 
         // PPISP controller pool for novel view synthesis (Phase 2 distillation)
         // Shared CNN and per-camera FC weights for memory efficiency

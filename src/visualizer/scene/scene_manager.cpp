@@ -333,12 +333,9 @@ namespace lfs::vis {
                 return;
             }
 
-            // Create PPISP with dimensions from file
-            // total_iterations=1 since we won't be training (just inference)
-            auto ppisp = std::make_unique<lfs::training::PPISP>(
-                static_cast<int>(header.num_cameras),
-                static_cast<int>(header.num_frames),
-                1);
+            // Create PPISP for inference (total_iterations=1 since we won't be training)
+            // deserialize_inference will set up internal maps from the file
+            auto ppisp = std::make_unique<lfs::training::PPISP>(1);
 
             // Create controller pool if present in file
             std::unique_ptr<lfs::training::PPISPControllerPool> controller_pool;

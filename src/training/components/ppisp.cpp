@@ -13,51 +13,123 @@ namespace lfs::training {
 
     namespace {
         constexpr uint32_t CHECKPOINT_MAGIC = 0x4C465050; // "LFPP"
-        constexpr uint32_t CHECKPOINT_VERSION = 1;
+        constexpr uint32_t CHECKPOINT_VERSION = 2;
+
+        void serialize_int_map(std::ostream& os, const std::unordered_map<int, int>& m) {
+            const auto size = static_cast<uint32_t>(m.size());
+            os.write(reinterpret_cast<const char*>(&size), sizeof(size));
+            for (const auto& [k, v] : m) {
+                os.write(reinterpret_cast<const char*>(&k), sizeof(k));
+                os.write(reinterpret_cast<const char*>(&v), sizeof(v));
+            }
+        }
+
+        void deserialize_int_map(std::istream& is, std::unordered_map<int, int>& m) {
+            uint32_t size;
+            is.read(reinterpret_cast<char*>(&size), sizeof(size));
+            m.clear();
+            m.reserve(size);
+            for (uint32_t i = 0; i < size; ++i) {
+                int k, v;
+                is.read(reinterpret_cast<char*>(&k), sizeof(k));
+                is.read(reinterpret_cast<char*>(&v), sizeof(v));
+                m[k] = v;
+            }
+        }
     } // namespace
 
-    PPISP::PPISP(int num_cameras, int num_frames, int total_iterations, Config config)
+    PPISP::PPISP(int total_iterations, Config config)
         : config_(config),
           current_lr_(config.lr),
           initial_lr_(config.lr),
-          total_iterations_(total_iterations),
-          num_cameras_(num_cameras),
-          num_frames_(num_frames) {
+          total_iterations_(total_iterations) {
+    }
 
-        assert(num_cameras > 0 && "num_cameras must be positive");
-        assert(num_frames > 0 && "num_frames must be positive");
+    void PPISP::register_frame(int uid, int camera_id) {
+        assert(!finalized_ && "Cannot register frames after finalize()");
+        assert(uid_to_frame_idx_.find(uid) == uid_to_frame_idx_.end() && "Duplicate frame UID");
+
+        if (camera_id_to_idx_.find(camera_id) == camera_id_to_idx_.end()) {
+            camera_id_to_idx_[camera_id] = static_cast<int>(camera_id_to_idx_.size());
+        }
+        uid_to_frame_idx_[uid] = static_cast<int>(uid_to_frame_idx_.size());
+        uid_to_camera_id_[uid] = camera_id;
+    }
+
+    void PPISP::finalize() {
+        assert(!finalized_ && "Already finalized");
+        assert(!uid_to_frame_idx_.empty() && "No frames registered");
+        assert(!camera_id_to_idx_.empty() && "No cameras registered");
+
+        num_cameras_ = static_cast<int>(camera_id_to_idx_.size());
+        num_frames_ = static_cast<int>(uid_to_frame_idx_.size());
+
+        allocate_tensors();
+        finalized_ = true;
+
+        LOG_DEBUG("PPISP: {} cameras, {} frames, lr={:.2e}", num_cameras_, num_frames_, config_.lr);
+    }
+
+    bool PPISP::is_known_frame(int uid) const { return uid_to_frame_idx_.find(uid) != uid_to_frame_idx_.end(); }
+
+    bool PPISP::is_known_camera(int camera_id) const {
+        return camera_id_to_idx_.find(camera_id) != camera_id_to_idx_.end();
+    }
+
+    int PPISP::camera_for_frame(int uid) const {
+        auto it = uid_to_camera_id_.find(uid);
+        assert(it != uid_to_camera_id_.end() && "Unknown frame UID");
+        return it->second;
+    }
+
+    int PPISP::camera_index(int camera_id) const { return translate_camera(camera_id); }
+
+    int PPISP::translate_camera(int camera_id) const {
+        auto it = camera_id_to_idx_.find(camera_id);
+        assert(it != camera_id_to_idx_.end() && "Unknown camera_id");
+        return it->second;
+    }
+
+    int PPISP::translate_frame(int uid) const {
+        auto it = uid_to_frame_idx_.find(uid);
+        assert(it != uid_to_frame_idx_.end() && "Unknown frame UID");
+        return it->second;
+    }
+
+    void PPISP::allocate_tensors() {
+        assert(num_cameras_ > 0 && "num_cameras must be positive");
+        assert(num_frames_ > 0 && "num_frames must be positive");
 
         // Allocate exposure params [num_frames]
-        exposure_params_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames)}, lfs::core::Device::CUDA);
-        exposure_exp_avg_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames)}, lfs::core::Device::CUDA);
-        exposure_exp_avg_sq_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames)}, lfs::core::Device::CUDA);
-        exposure_grad_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames)}, lfs::core::Device::CUDA);
+        exposure_params_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames_)}, lfs::core::Device::CUDA);
+        exposure_exp_avg_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames_)}, lfs::core::Device::CUDA);
+        exposure_exp_avg_sq_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames_)}, lfs::core::Device::CUDA);
+        exposure_grad_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames_)}, lfs::core::Device::CUDA);
 
         // Allocate vignetting params [num_cameras * 3 * 5]
-        size_t vig_size = static_cast<size_t>(num_cameras) * 3 * 5;
+        size_t vig_size = static_cast<size_t>(num_cameras_) * 3 * 5;
         vignetting_params_ = lfs::core::Tensor::zeros({vig_size}, lfs::core::Device::CUDA);
         vignetting_exp_avg_ = lfs::core::Tensor::zeros({vig_size}, lfs::core::Device::CUDA);
         vignetting_exp_avg_sq_ = lfs::core::Tensor::zeros({vig_size}, lfs::core::Device::CUDA);
         vignetting_grad_ = lfs::core::Tensor::zeros({vig_size}, lfs::core::Device::CUDA);
 
         // Allocate color params [num_frames * 8]
-        size_t color_size = static_cast<size_t>(num_frames) * 8;
+        size_t color_size = static_cast<size_t>(num_frames_) * 8;
         color_params_ = lfs::core::Tensor::zeros({color_size}, lfs::core::Device::CUDA);
         color_exp_avg_ = lfs::core::Tensor::zeros({color_size}, lfs::core::Device::CUDA);
         color_exp_avg_sq_ = lfs::core::Tensor::zeros({color_size}, lfs::core::Device::CUDA);
         color_grad_ = lfs::core::Tensor::zeros({color_size}, lfs::core::Device::CUDA);
 
         // Allocate CRF params [num_cameras * 3 * 4]
-        size_t crf_size = static_cast<size_t>(num_cameras) * 3 * 4;
+        size_t crf_size = static_cast<size_t>(num_cameras_) * 3 * 4;
         crf_params_ = lfs::core::Tensor::zeros({crf_size}, lfs::core::Device::CUDA);
         crf_exp_avg_ = lfs::core::Tensor::zeros({crf_size}, lfs::core::Device::CUDA);
         crf_exp_avg_sq_ = lfs::core::Tensor::zeros({crf_size}, lfs::core::Device::CUDA);
         crf_grad_ = lfs::core::Tensor::zeros({crf_size}, lfs::core::Device::CUDA);
 
-        // Initialize to identity (already zeros, which is identity for these params)
         kernels::launch_ppisp_init_identity(exposure_params_.ptr<float>(), vignetting_params_.ptr<float>(),
-                                            color_params_.ptr<float>(), crf_params_.ptr<float>(), num_cameras,
-                                            num_frames, nullptr);
+                                            color_params_.ptr<float>(), crf_params_.ptr<float>(), num_cameras_,
+                                            num_frames_, nullptr);
 
         // ZCA pinv block-diagonal matrix for color mean regularization
         // 8x8 block-diagonal: [Blue 2x2, Red 2x2, Green 2x2, Neutral 2x2]
@@ -78,13 +150,12 @@ namespace lfs::training {
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, -0.0034654f, 0.0128158f,
         }, {8, 8}, lfs::core::Device::CUDA);
         // clang-format on
-
-        LOG_DEBUG("PPISP: {} cameras, {} frames, lr={:.2e}", num_cameras, num_frames, config.lr);
     }
 
-    lfs::core::Tensor PPISP::apply(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx) {
-        assert(camera_idx >= -1 && camera_idx < num_cameras_ && "camera_idx out of range");
-        assert(frame_idx >= -1 && frame_idx < num_frames_ && "frame_idx out of range");
+    lfs::core::Tensor PPISP::apply(const lfs::core::Tensor& rgb, int camera_id, int uid) {
+        assert(finalized_ && "Must call finalize() before apply()");
+        const int camera_idx = translate_camera(camera_id);
+        const int frame_idx = translate_frame(uid);
 
         const auto& shape = rgb.shape();
         assert(shape.rank() == 3 && shape[0] == 3 && "Expected CHW layout with 3 channels");
@@ -213,10 +284,11 @@ namespace lfs::training {
         return output;
     }
 
-    lfs::core::Tensor PPISP::apply_with_overrides(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx,
+    lfs::core::Tensor PPISP::apply_with_overrides(const lfs::core::Tensor& rgb, int camera_id, int uid,
                                                   const PPISPRenderOverrides& ov) {
-        assert(camera_idx >= -1 && camera_idx < num_cameras_ && "camera_idx out of range");
-        assert(frame_idx >= -1 && frame_idx < num_frames_ && "frame_idx out of range");
+        assert(finalized_ && "Must call finalize() before apply_with_overrides()");
+        const int camera_idx = translate_camera(camera_id);
+        const int frame_idx = translate_frame(uid);
 
         const auto& shape = rgb.shape();
         assert(shape.rank() == 3 && shape[0] == 3 && "Expected CHW layout with 3 channels");
@@ -228,7 +300,7 @@ namespace lfs::training {
 
         // Exposure: add offset to learned value
         auto exposure_modified = exposure_params_.clone();
-        if (frame_idx >= 0 && ov.exposure_offset != 0.0f) {
+        if (ov.exposure_offset != 0.0f) {
             auto exp_cpu = exposure_modified.slice(0, frame_idx, frame_idx + 1).cpu();
             exp_cpu.ptr<float>()[0] += ov.exposure_offset;
             cudaMemcpy(exposure_modified.ptr<float>() + frame_idx, exp_cpu.ptr<float>(), sizeof(float),
@@ -237,7 +309,7 @@ namespace lfs::training {
 
         // Vignetting: multiply alpha coefficients by strength (or zero if disabled)
         auto vignetting_modified = vignetting_params_.clone();
-        if (camera_idx >= 0) {
+        {
             auto vig_cpu = vignetting_modified.cpu();
             float* vig_ptr = vig_cpu.ptr<float>();
             const float mult = ov.vignette_enabled ? ov.vignette_strength : 0.0f;
@@ -256,7 +328,7 @@ namespace lfs::training {
         constexpr float COLOR_SCALE = 12.0f;
         constexpr float WB_SCALE = 24.0f;
         auto color_modified = color_params_.clone();
-        if (frame_idx >= 0) {
+        {
             auto color_cpu = color_modified.cpu();
             float* p = color_cpu.ptr<float>();
             const size_t base = static_cast<size_t>(frame_idx) * 8;
@@ -273,7 +345,7 @@ namespace lfs::training {
 
         // CRF params [toe, shoulder, gamma, center] per channel
         auto crf_modified = crf_params_.clone();
-        if (camera_idx >= 0) {
+        {
             auto crf_cpu = crf_modified.cpu();
             float* crf_ptr = crf_cpu.ptr<float>();
             const float gamma_offsets[3] = {ov.gamma_red, ov.gamma_green, ov.gamma_blue};
@@ -297,10 +369,11 @@ namespace lfs::training {
         return output;
     }
 
-    lfs::core::Tensor PPISP::backward(const lfs::core::Tensor& rgb, const lfs::core::Tensor& grad_output,
-                                      int camera_idx, int frame_idx) {
-        assert(camera_idx >= -1 && camera_idx < num_cameras_ && "camera_idx out of range");
-        assert(frame_idx >= -1 && frame_idx < num_frames_ && "frame_idx out of range");
+    lfs::core::Tensor PPISP::backward(const lfs::core::Tensor& rgb, const lfs::core::Tensor& grad_output, int camera_id,
+                                      int uid) {
+        assert(finalized_ && "Must call finalize() before backward()");
+        const int camera_idx = translate_camera(camera_id);
+        const int frame_idx = translate_frame(uid);
 
         const auto& shape = rgb.shape();
         assert(shape.rank() == 3 && shape[0] == 3 && "Expected CHW layout with 3 channels");
@@ -687,8 +760,9 @@ namespace lfs::training {
         }
     }
 
-    lfs::core::Tensor PPISP::get_params_for_frame(int frame_idx) const {
-        assert(frame_idx >= 0 && frame_idx < num_frames_ && "frame_idx out of range");
+    lfs::core::Tensor PPISP::get_params_for_frame(int uid) const {
+        assert(finalized_ && "Must call finalize() before get_params_for_frame()");
+        const int frame_idx = translate_frame(uid);
 
         // Get exposure param for this frame: exposure_params_[frame_idx]
         auto exposure = exposure_params_.slice(0, frame_idx, frame_idx + 1);
@@ -719,6 +793,10 @@ namespace lfs::training {
         os << vignetting_params_ << vignetting_exp_avg_ << vignetting_exp_avg_sq_;
         os << color_params_ << color_exp_avg_ << color_exp_avg_sq_;
         os << crf_params_ << crf_exp_avg_ << crf_exp_avg_sq_;
+
+        serialize_int_map(os, camera_id_to_idx_);
+        serialize_int_map(os, uid_to_frame_idx_);
+        serialize_int_map(os, uid_to_camera_id_);
     }
 
     void PPISP::deserialize(std::istream& is) {
@@ -746,6 +824,10 @@ namespace lfs::training {
         is >> color_params_ >> color_exp_avg_ >> color_exp_avg_sq_;
         is >> crf_params_ >> crf_exp_avg_ >> crf_exp_avg_sq_;
 
+        deserialize_int_map(is, camera_id_to_idx_);
+        deserialize_int_map(is, uid_to_frame_idx_);
+        deserialize_int_map(is, uid_to_camera_id_);
+
         // Move to CUDA
         exposure_params_ = exposure_params_.cuda();
         exposure_exp_avg_ = exposure_exp_avg_.cuda();
@@ -766,6 +848,8 @@ namespace lfs::training {
             lfs::core::Tensor::zeros({static_cast<size_t>(num_cameras_) * 3 * 5}, lfs::core::Device::CUDA);
         color_grad_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_frames_) * 8}, lfs::core::Device::CUDA);
         crf_grad_ = lfs::core::Tensor::zeros({static_cast<size_t>(num_cameras_) * 3 * 4}, lfs::core::Device::CUDA);
+
+        finalized_ = true;
     }
 
     void PPISP::serialize_inference(std::ostream& os) const {
@@ -811,6 +895,18 @@ namespace lfs::training {
         vignetting_params_ = vignetting_params_.cuda();
         color_params_ = color_params_.cuda();
         crf_params_ = crf_params_.cuda();
+
+        camera_id_to_idx_.clear();
+        uid_to_frame_idx_.clear();
+        uid_to_camera_id_.clear();
+        for (int i = 0; i < num_cameras_; ++i) {
+            camera_id_to_idx_[i] = i;
+        }
+        for (int i = 0; i < num_frames_; ++i) {
+            uid_to_frame_idx_[i] = i;
+            uid_to_camera_id_[i] = 0;
+        }
+        finalized_ = true;
     }
 
 } // namespace lfs::training

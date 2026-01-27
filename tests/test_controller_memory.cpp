@@ -33,7 +33,11 @@ TEST(PPISPControllerMemoryTest, DistillationLoopNoLeak) {
     constexpr int IMAGE_W = 816;
 
     // Create PPISP and controllers
-    PPISP ppisp(NUM_CAMERAS, NUM_CAMERAS, 30000);
+    PPISP ppisp(30000);
+    for (int i = 0; i < NUM_CAMERAS; ++i) {
+        ppisp.register_frame(i, i);
+    }
+    ppisp.finalize();
     std::vector<std::unique_ptr<PPISPController>> controllers;
     for (int i = 0; i < NUM_CAMERAS; ++i) {
         controllers.push_back(std::make_unique<PPISPController>(5000));
@@ -100,7 +104,11 @@ TEST(PPISPControllerMemoryTest, VaryingImageSizesNoLeak) {
     std::vector<std::pair<int, int>> sizes = {{544, 816}, {480, 640}, {720, 1280}, {600, 800}};
 
     PPISPController controller(5000);
-    PPISP ppisp(4, 4, 500);
+    PPISP ppisp(500);
+    for (int i = 0; i < 4; ++i) {
+        ppisp.register_frame(i, i);
+    }
+    ppisp.finalize();
     PPISPController::preallocate_shared_buffers(720, 1280);
 
     // Warm up

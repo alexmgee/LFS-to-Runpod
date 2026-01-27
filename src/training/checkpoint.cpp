@@ -272,11 +272,10 @@ namespace lfs::training {
             if (has_flag(header.flags, CheckpointFlags::HAS_PPISP)) {
                 if (ppisp) {
                     ppisp->deserialize(file);
-                    LOG_INFO("PPISP restored (step={}, lr={:.2e})",
-                             ppisp->get_step(), ppisp->get_lr());
+                    LOG_INFO("PPISP restored (step={}, lr={:.2e})", ppisp->get_step(), ppisp->get_lr());
                 } else {
                     LOG_WARN("Checkpoint has PPISP but none provided - skipping data");
-                    PPISP temp(1, 1, 1);
+                    PPISP temp(1);
                     temp.deserialize(file);
                 }
             } else if (ppisp) {

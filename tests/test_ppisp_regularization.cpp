@@ -13,6 +13,16 @@ namespace {
     constexpr float RTOL = 1e-4f;
     constexpr float ATOL = 1e-5f;
 
+    std::unique_ptr<lfs::training::PPISP> create_test_ppisp(int num_cameras, int num_frames, int total_iterations,
+                                                            lfs::training::PPISPConfig config = {}) {
+        auto ppisp = std::make_unique<lfs::training::PPISP>(total_iterations, config);
+        for (int i = 0; i < num_frames; ++i) {
+            ppisp->register_frame(i, i % num_cameras);
+        }
+        ppisp->finalize();
+        return ppisp;
+    }
+
     // ZCA pinv block-diagonal matrix (same as in ppisp.cpp)
     torch::Tensor get_color_pinv_block_diag() {
         return torch::tensor({
@@ -140,7 +150,8 @@ namespace {
         config.color_mean = 0.0f;
         config.crf_channel = 0.0f;
 
-        lfs::training::PPISP ppisp(1, num_frames, 1000, config);
+        auto ppisp_ptr = create_test_ppisp(1, num_frames, 1000, config);
+        auto& ppisp = *ppisp_ptr;
 
         // Copy exposure params from torch
         auto exp_cpu = exposure_torch.contiguous().cpu();
@@ -650,7 +661,8 @@ namespace {
         config.color_mean = 1.0f;
         config.crf_channel = 0.1f;
 
-        lfs::training::PPISP ppisp(num_cameras, num_frames, 1000, config);
+        auto ppisp_ptr = create_test_ppisp(num_cameras, num_frames, 1000, config);
+        auto& ppisp = *ppisp_ptr;
 
         // Get initial loss
         auto loss0 = ppisp.reg_loss_gpu().cpu().item<float>();
@@ -691,7 +703,8 @@ namespace {
         config.color_mean = 1.0f;
         config.crf_channel = 0.1f;
 
-        lfs::training::PPISP ppisp(num_cameras, num_frames, 1000, config);
+        auto ppisp_ptr = create_test_ppisp(num_cameras, num_frames, 1000, config);
+        auto& ppisp = *ppisp_ptr;
 
         auto rgb = lfs::core::Tensor::ones({3, 32, 32}, lfs::core::Device::CUDA).mul(0.5f);
         auto grad_out = lfs::core::Tensor::ones({3, 32, 32}, lfs::core::Device::CUDA);
