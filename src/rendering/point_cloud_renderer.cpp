@@ -104,14 +104,11 @@ namespace lfs::rendering {
     }
 
     Tensor PointCloudRenderer::extractRGBFromSH(const Tensor& shs) {
-        const float SH_C0 = 0.28209479177387814f;
+        constexpr float SH_C0 = 0.28209479177387814f;
 
-        // Extract features_dc: shs[:, 0, :]
-        // We need to slice along dimension 1 (the second dimension)
-        Tensor features_dc = shs.slice(1, 0, 1).squeeze(1);
+        const Tensor features_dc = shs.slice(1, 0, 1).squeeze(1);
 
-        // Calculate colors: features_dc * SH_C0 + 0.5
-        Tensor colors = features_dc * SH_C0 + 0.5f;
+        const Tensor colors = features_dc * SH_C0 + 0.5f;
 
         return colors.clamp(0.0f, 1.0f);
     }
@@ -123,16 +120,17 @@ namespace lfs::rendering {
                                             const glm::vec3& background_color,
                                             const std::vector<glm::mat4>& model_transforms,
                                             const std::shared_ptr<lfs::core::Tensor>& transform_indices,
-                                            const bool equirectangular) {
+                                            const bool equirectangular,
+                                            const PointCloudCropParams& crop_params) {
         if (splat_data.size() == 0)
             return {};
 
-        const Tensor positions = splat_data.get_means();
-        const Tensor shs = splat_data.get_shs();
-        const Tensor colors = extractRGBFromSH(shs);
+        const auto& positions = splat_data.get_means();
+        const auto& shs = splat_data.get_shs();
+        const auto colors = extractRGBFromSH(shs);
 
         return renderInternal(positions, colors, view, projection, voxel_size, background_color,
-                              model_transforms, transform_indices, equirectangular);
+                              model_transforms, transform_indices, equirectangular, crop_params);
     }
 
     Result<void> PointCloudRenderer::render(const lfs::core::PointCloud& point_cloud,
@@ -142,17 +140,19 @@ namespace lfs::rendering {
                                             const glm::vec3& background_color,
                                             const std::vector<glm::mat4>& model_transforms,
                                             const std::shared_ptr<lfs::core::Tensor>& transform_indices,
-                                            const bool equirectangular) {
+                                            const bool equirectangular,
+                                            const PointCloudCropParams& crop_params) {
         if (point_cloud.size() == 0)
             return {};
 
-        const Tensor positions = point_cloud.means;
-        Tensor colors = point_cloud.colors;
-        if (colors.dtype() == lfs::core::DataType::UInt8)
+        const auto& positions = point_cloud.means;
+        auto colors = point_cloud.colors;
+        if (colors.dtype() == lfs::core::DataType::UInt8) {
             colors = colors.to(lfs::core::DataType::Float32) / 255.0f;
+        }
 
         return renderInternal(positions, colors, view, projection, voxel_size, background_color,
-                              model_transforms, transform_indices, equirectangular);
+                              model_transforms, transform_indices, equirectangular, crop_params);
     }
 
     Result<void> PointCloudRenderer::renderInternal(const Tensor& positions,
@@ -163,7 +163,8 @@ namespace lfs::rendering {
                                                     const glm::vec3& background_color,
                                                     const std::vector<glm::mat4>& model_transforms,
                                                     const std::shared_ptr<lfs::core::Tensor>& transform_indices,
-                                                    const bool equirectangular) {
+                                                    const bool equirectangular,
+                                                    const PointCloudCropParams& crop_params) {
         if (!initialized_) {
             return std::unexpected("Renderer not initialized");
         }
@@ -242,6 +243,19 @@ namespace lfs::rendering {
         if (auto result = s->set("u_voxel_size", voxel_size); !result)
             return result;
         if (auto result = s->set("u_equirectangular", equirectangular); !result)
+            return result;
+
+        if (auto result = s->set("u_crop_enabled", crop_params.enabled); !result)
+            return result;
+        if (auto result = s->set("u_crop_transform", crop_params.transform); !result)
+            return result;
+        if (auto result = s->set("u_crop_min", crop_params.min); !result)
+            return result;
+        if (auto result = s->set("u_crop_max", crop_params.max); !result)
+            return result;
+        if (auto result = s->set("u_crop_inverse", crop_params.inverse); !result)
+            return result;
+        if (auto result = s->set("u_crop_desaturate", crop_params.desaturate); !result)
             return result;
 
         constexpr int MAX_TRANSFORMS = 64;

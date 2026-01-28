@@ -207,6 +207,7 @@ set(TEST_FILES
     test_torch_conversion.cpp
     test_fastgs_kernels.cpp
     test_fastgs_fuzz.cpp
+    test_fastgs_analytical_gradients.cpp
     test_background_image.cpp
     test_tensor_nn_ops.cpp
     test_ppisp_controller.cpp

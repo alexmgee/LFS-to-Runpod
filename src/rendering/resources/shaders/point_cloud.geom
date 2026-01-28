@@ -7,9 +7,11 @@ in vec3 v_color[];
 in vec3 v_normal[];
 in float v_ndc_x[];
 in int v_equirectangular[];
+in float v_outside_crop[];
 
 out vec3 g_color;
 out vec3 g_normal;
+out float g_outside_crop;
 
 void main() {
     // In equirectangular mode, cull triangles that cross the ±PI seam
@@ -32,6 +34,7 @@ void main() {
         gl_Position = gl_in[i].gl_Position;
         g_color = v_color[i];
         g_normal = v_normal[i];
+        g_outside_crop = v_outside_crop[i];
         EmitVertex();
     }
     EndPrimitive();

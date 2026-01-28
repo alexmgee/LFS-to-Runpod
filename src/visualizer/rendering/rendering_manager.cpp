@@ -53,7 +53,6 @@ namespace lfs::vis {
             return r;
         }
 
-        // Apply standalone appearance model (for viewing without training context)
         lfs::core::Tensor applyStandaloneAppearance(
             const lfs::core::Tensor& rgb,
             Scene& scene,
@@ -65,7 +64,6 @@ namespace lfs::vis {
                 return rgb;
             }
 
-            // Ensure input is [C,H,W] format
             auto input = rgb;
             bool was_hwc = false;
             if (input.ndim() == 3 && input.shape()[2] == 3) {
@@ -75,18 +73,15 @@ namespace lfs::vis {
 
             lfs::core::Tensor result;
 
-            // Check if this is a known training camera
             bool is_training_camera = (camera_uid >= 0 && camera_uid < ppisp->num_frames());
 
             if (is_training_camera) {
-                // Use per-frame learned parameters with overrides
                 if (overrides.isIdentity()) {
                     result = ppisp->apply(input, camera_uid, camera_uid);
                 } else {
                     result = ppisp->apply_with_overrides(input, camera_uid, camera_uid, toRenderOverrides(overrides));
                 }
             } else if (scene.hasAppearanceController()) {
-                // Novel view: use per-camera controller prediction with optional overrides
                 auto* pool = scene.getAppearanceControllerPool();
                 const int controller_idx = camera_uid >= 0 ? camera_uid % pool->num_cameras() : 0;
                 auto input_batch = input.unsqueeze(0);
@@ -98,11 +93,9 @@ namespace lfs::vis {
                                                                                toRenderOverrides(overrides));
                 }
             } else {
-                // No controller - return uncorrected (same as trainer)
                 return rgb;
             }
 
-            // Convert back to [H,W,C] if input was that format
             if (was_hwc && result.is_valid()) {
                 result = result.permute({1, 2, 0}).contiguous();
             }
@@ -487,6 +480,8 @@ namespace lfs::vis {
         });
 
         state::SceneChanged::when([this](const auto&) {
+            cached_filtered_point_cloud_.reset();
+            cached_source_point_cloud_ = nullptr;
             markDirty();
         });
 
@@ -1215,72 +1210,7 @@ namespace lfs::vis {
             }
 
             if (scene_state.point_cloud && scene_state.point_cloud->size() > 0) {
-                const lfs::core::PointCloud* point_cloud_to_render = scene_state.point_cloud;
-
-                // Apply cropbox filter (GPU-accelerated, cached)
-                for (const auto& cb : scene_state.cropboxes) {
-                    if (!cb.data || (!cb.data->enabled && !settings_.show_crop_box))
-                        continue;
-
-                    const bool cache_valid = cached_filtered_point_cloud_ &&
-                                             cached_source_point_cloud_ == scene_state.point_cloud &&
-                                             cached_cropbox_transform_ == cb.world_transform &&
-                                             cached_cropbox_min_ == cb.data->min &&
-                                             cached_cropbox_max_ == cb.data->max &&
-                                             cached_cropbox_inverse_ == cb.data->inverse;
-
-                    if (!cache_valid) {
-                        const auto& means = scene_state.point_cloud->means;
-                        const auto& colors = scene_state.point_cloud->colors;
-                        const size_t num_points = scene_state.point_cloud->size();
-                        const glm::mat4 m = glm::inverse(cb.world_transform);
-                        const auto device = means.device();
-
-                        // GLM column-major -> row-major for tensor matmul
-                        const auto transform = lfs::core::Tensor::from_vector({m[0][0], m[1][0], m[2][0], m[3][0],
-                                                                               m[0][1], m[1][1], m[2][1], m[3][1],
-                                                                               m[0][2], m[1][2], m[2][2], m[3][2],
-                                                                               m[0][3], m[1][3], m[2][3], m[3][3]},
-                                                                              {4, 4}, device);
-
-                        // Transform and filter on GPU
-                        const auto ones = lfs::core::Tensor::ones({num_points, 1}, device);
-                        const auto local_pos = transform.mm(means.cat(ones, 1).t()).t();
-
-                        const auto x = local_pos.slice(1, 0, 1).squeeze(1);
-                        const auto y = local_pos.slice(1, 1, 2).squeeze(1);
-                        const auto z = local_pos.slice(1, 2, 3).squeeze(1);
-
-                        auto mask = (x >= cb.data->min.x) && (x <= cb.data->max.x) &&
-                                    (y >= cb.data->min.y) && (y <= cb.data->max.y) &&
-                                    (z >= cb.data->min.z) && (z <= cb.data->max.z);
-                        if (cb.data->inverse)
-                            mask = mask.logical_not();
-
-                        const auto indices = mask.nonzero().squeeze(1);
-                        if (indices.size(0) > 0) {
-                            cached_filtered_point_cloud_ = std::make_unique<lfs::core::PointCloud>(
-                                means.index_select(0, indices), colors.index_select(0, indices));
-                        } else {
-                            cached_filtered_point_cloud_.reset();
-                        }
-
-                        cached_source_point_cloud_ = scene_state.point_cloud;
-                        cached_cropbox_transform_ = cb.world_transform;
-                        cached_cropbox_min_ = cb.data->min;
-                        cached_cropbox_max_ = cb.data->max;
-                        cached_cropbox_inverse_ = cb.data->inverse;
-                    }
-
-                    if (cached_filtered_point_cloud_) {
-                        point_cloud_to_render = cached_filtered_point_cloud_.get();
-                    } else {
-                        return;
-                    }
-                    break;
-                }
-
-                LOG_TRACE("Rendering point cloud with {} points", point_cloud_to_render->size());
+                LOG_TRACE("Rendering point cloud with {} points", scene_state.point_cloud->size());
 
                 // Get point cloud transform from scene state
                 glm::mat4 point_cloud_transform(1.0f);
@@ -1296,6 +1226,23 @@ namespace lfs::vis {
                     .orthographic = settings_.orthographic,
                     .ortho_scale = settings_.ortho_scale};
 
+                // Build crop box from scene state for GPU-based desaturation
+                std::optional<lfs::rendering::BoundingBox> crop_box;
+                bool crop_inverse = false;
+                bool crop_desaturate = false;
+                for (const auto& cb : scene_state.cropboxes) {
+                    if (!cb.data || (!cb.data->enabled && !settings_.show_crop_box))
+                        continue;
+
+                    crop_box = lfs::rendering::BoundingBox{
+                        .min = cb.data->min,
+                        .max = cb.data->max,
+                        .transform = glm::inverse(cb.world_transform)};
+                    crop_inverse = cb.data->inverse;
+                    crop_desaturate = settings_.show_crop_box && settings_.desaturate_cropping;
+                    break;
+                }
+
                 lfs::rendering::RenderRequest pc_request{
                     .viewport = viewport_data,
                     .scaling_modifier = settings_.scaling_modifier,
@@ -1303,7 +1250,7 @@ namespace lfs::vis {
                     .mip_filter = settings_.mip_filter,
                     .sh_degree = 0,
                     .background_color = settings_.background_color,
-                    .crop_box = std::nullopt,
+                    .crop_box = crop_box,
                     .point_cloud_mode = true,
                     .voxel_size = settings_.voxel_size,
                     .gut = false,
@@ -1324,12 +1271,14 @@ namespace lfs::vis {
                     .brush_saturation_mode = false,
                     .brush_saturation_amount = 0.0f,
                     .selection_mode_rings = false,
+                    .crop_inverse = crop_inverse,
+                    .crop_desaturate = crop_desaturate,
                     .selected_node_mask = {},
                     .hovered_depth_id = nullptr,
                     .highlight_gaussian_id = -1,
                     .far_plane = lfs::rendering::DEFAULT_FAR_PLANE};
 
-                auto render_result = engine_->renderPointCloud(*point_cloud_to_render, pc_request);
+                auto render_result = engine_->renderPointCloud(*scene_state.point_cloud, pc_request);
                 if (render_result) {
                     cached_result_ = *render_result;
 

@@ -767,7 +767,7 @@ namespace lfs::vis::gui {
                     return;
                 }
 
-                if (is_camera_group || parent_is_dataset) {
+                if (is_camera_group) {
                     ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::NO_ACTIONS));
                     finishNode();
                     return;

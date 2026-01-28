@@ -319,7 +319,16 @@ namespace lfs::rendering {
 
         LOG_TRACE("Rendering point cloud with viewport {}x{}", request.viewport.size.x, request.viewport.size.y);
 
-        // Convert to internal pipeline request (simplified - no crop box for point clouds)
+        PointCloudCropParams crop_params;
+        if (request.crop_box.has_value()) {
+            crop_params.enabled = true;
+            crop_params.transform = request.crop_box->transform;
+            crop_params.min = request.crop_box->min;
+            crop_params.max = request.crop_box->max;
+            crop_params.inverse = request.crop_inverse;
+            crop_params.desaturate = request.crop_desaturate;
+        }
+
         RenderingPipeline::RenderRequest pipeline_req{
             .view_rotation = request.viewport.rotation,
             .view_translation = request.viewport.translation,
@@ -327,7 +336,7 @@ namespace lfs::rendering {
             .focal_length_mm = request.viewport.focal_length_mm,
             .scaling_modifier = request.scaling_modifier,
             .antialiasing = false,
-            .mip_filter = false, // Not applicable to point clouds
+            .mip_filter = false,
             .sh_degree = 0,
             .render_mode = RenderMode::RGB,
             .crop_box = nullptr,
@@ -355,7 +364,8 @@ namespace lfs::rendering {
             .hovered_depth_id = nullptr,
             .highlight_gaussian_id = -1,
             .far_plane = DEFAULT_FAR_PLANE,
-            .selected_node_mask = {}};
+            .selected_node_mask = {},
+            .point_cloud_crop_params = crop_params};
 
         auto pipeline_result = pipeline_.renderRawPointCloud(point_cloud, pipeline_req);
 

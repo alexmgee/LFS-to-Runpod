@@ -90,6 +90,7 @@ namespace lfs::rendering {
             float selection_flash_intensity = 0.0f;
             bool orthographic = false;
             float ortho_scale = DEFAULT_ORTHO_SCALE;
+            PointCloudCropParams point_cloud_crop_params;
 
             [[nodiscard]] glm::mat4 getProjectionMatrix(const float near_plane = DEFAULT_NEAR_PLANE,
                                                         const float far_plane = DEFAULT_FAR_PLANE) const {

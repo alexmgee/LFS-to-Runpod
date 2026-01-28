@@ -1967,6 +1967,7 @@ namespace lfs::vis {
             }
         }
 
+        scene_.invalidateCache();
         emitSceneChanged();
     }
 
@@ -2103,6 +2104,7 @@ namespace lfs::vis {
             }
         }
 
+        scene_.invalidateCache();
         emitSceneChanged();
     }
 
@@ -2353,15 +2355,15 @@ namespace lfs::vis {
         if (cropbox_id == NULL_NODE)
             return;
 
-        // Fit cropbox to parent bounds
+        // Fit cropbox to parent bounds and enable it
+        CropBoxData data;
         glm::vec3 min_bounds, max_bounds;
         if (scene_.getNodeBounds(node->id, min_bounds, max_bounds)) {
-            CropBoxData data;
             data.min = min_bounds;
             data.max = max_bounds;
-            data.enabled = true;
-            scene_.setCropBoxData(cropbox_id, data);
         }
+        data.enabled = true;
+        scene_.setCropBoxData(cropbox_id, data);
 
         // Emit PLYAdded event
         if (const auto* cropbox = scene_.getNodeById(cropbox_id)) {
@@ -2410,16 +2412,13 @@ namespace lfs::vis {
         if (ellipsoid_id == NULL_NODE)
             return;
 
-        // Fit ellipsoid to parent bounds
+        // Fit ellipsoid to parent bounds and enable it
+        EllipsoidData data;
         glm::vec3 min_bounds, max_bounds;
         if (scene_.getNodeBounds(node->id, min_bounds, max_bounds)) {
             constexpr float CIRCUMSCRIBE_FACTOR = 1.732050808f; // sqrt(3)
             const glm::vec3 half_size = (max_bounds - min_bounds) * 0.5f;
-
-            EllipsoidData data;
             data.radii = half_size * CIRCUMSCRIBE_FACTOR;
-            data.enabled = true;
-            scene_.setEllipsoidData(ellipsoid_id, data);
 
             // Position ellipsoid at center of bounds
             if (auto* ellipsoid_node = scene_.getMutableNode(ellipsoid_name)) {
@@ -2428,6 +2427,8 @@ namespace lfs::vis {
                 ellipsoid_node->transform_dirty = true;
             }
         }
+        data.enabled = true;
+        scene_.setEllipsoidData(ellipsoid_id, data);
 
         // Emit PLYAdded event
         if (const auto* ellipsoid = scene_.getNodeById(ellipsoid_id)) {

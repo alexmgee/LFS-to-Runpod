@@ -22,6 +22,15 @@
 
 namespace lfs::rendering {
 
+    struct PointCloudCropParams {
+        bool enabled = false;
+        glm::mat4 transform{1.0f};
+        glm::vec3 min{0.0f};
+        glm::vec3 max{0.0f};
+        bool inverse = false;
+        bool desaturate = false;
+    };
+
     class PointCloudRenderer {
     public:
         PointCloudRenderer() = default;
@@ -36,7 +45,8 @@ namespace lfs::rendering {
                             const glm::vec3& background_color,
                             const std::vector<glm::mat4>& model_transforms = {},
                             const std::shared_ptr<lfs::core::Tensor>& transform_indices = nullptr,
-                            bool equirectangular = false);
+                            bool equirectangular = false,
+                            const PointCloudCropParams& crop_params = {});
 
         Result<void> render(const lfs::core::PointCloud& point_cloud,
                             const glm::mat4& view,
@@ -45,7 +55,8 @@ namespace lfs::rendering {
                             const glm::vec3& background_color,
                             const std::vector<glm::mat4>& model_transforms = {},
                             const std::shared_ptr<lfs::core::Tensor>& transform_indices = nullptr,
-                            bool equirectangular = false);
+                            bool equirectangular = false,
+                            const PointCloudCropParams& crop_params = {});
 
         // Check if initialized
         bool isInitialized() const { return initialized_; }
@@ -63,7 +74,8 @@ namespace lfs::rendering {
                                     const glm::vec3& background_color,
                                     const std::vector<glm::mat4>& model_transforms,
                                     const std::shared_ptr<lfs::core::Tensor>& transform_indices,
-                                    bool equirectangular);
+                                    bool equirectangular,
+                                    const PointCloudCropParams& crop_params);
 
         // OpenGL resources using RAII
         VAO cube_vao_;
