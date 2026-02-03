@@ -1473,6 +1473,20 @@ namespace lfs::vis::gui::panels {
                 widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::GUT));
             }
 
+            // Undistort
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", LOC(TrainingParams::UNDISTORT));
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::Checkbox("##undistort", &opt_params.undistort);
+            } else {
+                ImGui::Text("%s", opt_params.undistort ? "Enabled" : "Disabled");
+            }
+            if (ImGui::IsItemHovered()) {
+                widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::UNDISTORT));
+            }
+
             // Mip Filter (anti-aliasing)
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -1753,7 +1767,14 @@ namespace lfs::vis::gui::panels {
             case FinishReason::Error:
                 ImGui::TextColored(t.palette.error, "%s", LOC(Messages::TRAINING_ERROR));
                 if (const auto error_msg = trainer_manager->getLastError(); !error_msg.empty()) {
-                    ImGui::TextWrapped("%s", error_msg.c_str());
+                    const char* localized = nullptr;
+                    if (error_msg.find("Distorted images detected") != std::string::npos)
+                        localized = LOC(Messages::ERR_DISTORTED_IMAGES);
+                    else if (error_msg.find("ortho model") != std::string::npos)
+                        localized = LOC(Messages::ERR_ORTHO_NOT_SUPPORTED);
+                    else if (error_msg.find("non-pinhole") != std::string::npos)
+                        localized = LOC(Messages::ERR_NON_PINHOLE);
+                    ImGui::TextWrapped("%s", localized ? localized : error_msg.c_str());
                 }
                 break;
             default:

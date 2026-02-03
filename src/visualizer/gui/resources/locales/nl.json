@@ -106,6 +106,7 @@
     "opt.mask_mode": "Mask Mode:",
     "opt.sparsity": "Sparsity:",
     "opt.gut": "GUT:",
+    "opt.undistort": "Undistort:",
     "opt.mip_filter": "Mip Filter:",
     "opt.bg_modulation": "BG Modulation:",
     "opt.lr.position": "  Position:",
@@ -154,6 +155,7 @@
     "tooltip.bilateral_grid": "Uiterlijk embedding voor belichting/kleurcorrectie",
     "tooltip.sparsity": "Schakel snoeien in voor modelcompressie",
     "tooltip.gut": "Uniforme behandeling voor vervormde camera's",
+    "tooltip.undistort": "Beelden corrigeren voor vervorming vóór training",
     "tooltip.bg_modulation": "Leer aparte achtergrondkleur",
     "tooltip.gradient_thr": "Gradiëntdrempel voor verdichting",
     "tooltip.opacity_reg": "Dekking regularisatiegewicht",
@@ -347,7 +349,10 @@
     "training_stopped": "Training Gestopt",
     "training_error": "Training Fout",
     "param_manager_unavailable": "ParameterManager niet beschikbaar",
-    "failed_to_load_params": "Laden van params mislukt:"
+    "failed_to_load_params": "Laden van params mislukt:",
+    "err_distorted_images": "Vervormde beelden gedetecteerd. Activeer --gut of --undistort om te trainen met vervormde camera's.",
+    "err_ortho_not_supported": "Training met orthografisch cameramodel wordt nog niet ondersteund.",
+    "err_non_pinhole": "Activeer --gut of --undistort om te trainen met niet-pinhole camera's."
   },
 
   "controls": {
@@ -667,6 +672,7 @@
     "use_alpha_as_mask": "Use Alpha as Mask:",
     "sparsity": "Sparsity:",
     "gut": "GUT:",
+    "undistort": "Undistort:",
     "mip_filter": "Mip Filter:",
     "bg_settings": "Achtergrond Instellingen",
     "bg_mode": "Modus:",
