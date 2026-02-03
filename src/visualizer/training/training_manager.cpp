@@ -162,6 +162,7 @@ namespace lfs::vis {
             LOG_WARN("Failed to transition to Idle");
         }
 
+        python::update_training_state(false, "idle");
         python::update_trainer_loaded(false, 0);
         LOG_INFO("Trainer cleared");
     }

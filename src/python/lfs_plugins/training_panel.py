@@ -10,10 +10,10 @@ import lichtfeld as lf
 from .types import Panel
 from .ui.state import AppState
 
-STATE_COLORS = {
-    "idle": (0.5, 0.5, 0.5, 1.0),
-    "stopping": (0.6, 0.6, 0.6, 1.0),
-}
+COLOR_IDLE = (0.5, 0.5, 0.5, 1.0)
+COLOR_MUTED = (0.6, 0.6, 0.6, 1.0)
+COLOR_SUCCESS = (0.3, 0.9, 0.3, 1.0)
+COLOR_ERROR = (0.9, 0.3, 0.3, 1.0)
 
 FULL_WIDTH = (-1, 0)
 
@@ -67,12 +67,12 @@ class TrainingPanel(Panel):
 
     def draw(self, layout):
         if not AppState.has_trainer.value:
-            layout.text_colored("No trainer loaded", STATE_COLORS["idle"])
+            layout.text_colored("No trainer loaded", COLOR_IDLE)
             return
 
         params = lf.optimization_params()
         if not params.has_params():
-            layout.text_colored("Parameters not available", STATE_COLORS["idle"])
+            layout.text_colored("Parameters not available", COLOR_IDLE)
             return
 
         state = AppState.trainer_state.value
@@ -112,29 +112,29 @@ class TrainingPanel(Panel):
             if layout.button_styled(tr("training_panel.stop"), "error", FULL_WIDTH):
                 lf.stop_training()
 
-        elif state == "finished":
-            reason = lf.finish_reason()
-            if reason == "completed":
-                layout.text_colored(tr("status.complete"), (0.3, 0.9, 0.3, 1.0))
-            elif reason == "stopped":
-                layout.text_colored(tr("status.stopped"), STATE_COLORS["stopping"])
-            elif reason == "error":
-                layout.text_colored(tr("status.error"), (0.9, 0.3, 0.3, 1.0))
-                if error_msg := lf.trainer_error():
-                    layout.text_wrapped(error_msg)
+        elif state in ("completed", "stopped"):
+            if state == "completed":
+                layout.text_colored(tr("status.complete"), COLOR_SUCCESS)
             else:
-                layout.text_colored(tr("training_panel.finished"), STATE_COLORS["stopping"])
+                layout.text_colored(tr("status.stopped"), COLOR_MUTED)
+            if layout.button_styled(tr("training_panel.switch_edit_mode"), "success", FULL_WIDTH):
+                lf.switch_to_edit_mode()
+            if layout.button_styled(tr("training_panel.reset"), "secondary", FULL_WIDTH):
+                lf.reset_training()
+            if layout.button_styled(tr("training_panel.clear"), "error", FULL_WIDTH):
+                lf.clear_scene()
 
-            if reason in ("completed", "stopped"):
-                if layout.button_styled(tr("training_panel.switch_edit_mode"), "success", FULL_WIDTH):
-                    lf.switch_to_edit_mode()
+        elif state == "error":
+            layout.text_colored(tr("status.error"), COLOR_ERROR)
+            if error_msg := lf.trainer_error():
+                layout.text_wrapped(error_msg)
             if layout.button_styled(tr("training_panel.reset"), "secondary", FULL_WIDTH):
                 lf.reset_training()
             if layout.button_styled(tr("training_panel.clear"), "error", FULL_WIDTH):
                 lf.clear_scene()
 
         elif state == "stopping":
-            layout.text_colored(tr("status.stopping"), STATE_COLORS["stopping"])
+            layout.text_colored(tr("status.stopping"), COLOR_MUTED)
 
         if state in ("running", "paused"):
             if layout.button_styled(tr("training_panel.save_checkpoint"), "primary", FULL_WIDTH):
@@ -712,7 +712,9 @@ class TrainingPanel(Panel):
             "running": tr("training_panel.running"),
             "paused": tr("status.paused"),
             "stopping": tr("status.stopping"),
-            "finished": tr("training_panel.finished"),
+            "completed": tr("status.complete"),
+            "stopped": tr("status.stopped"),
+            "error": tr("status.error"),
         }
         layout.label(f"{tr('status.mode')}: {state_labels.get(state, 'Unknown')}")
 

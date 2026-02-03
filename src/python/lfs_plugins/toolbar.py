@@ -41,11 +41,19 @@ def _tool_to_dict(tool: ToolDef) -> dict:
     }
 
 
+_TOOLBAR_VISIBLE_STATES = ("idle", "ready")
+
+
 class GizmoToolbar(Panel):
     """Data-driven horizontal gizmo toolbar - queries tool registry for buttons"""
     label = "Gizmo Toolbar"
     space = "VIEWPORT_OVERLAY"
     order = 1
+
+    @classmethod
+    def poll(cls, context) -> bool:
+        from .ui.state import AppState
+        return AppState.trainer_state.value in _TOOLBAR_VISIBLE_STATES
 
     def _get_tool_icon(self, tool):
         from . import icon_manager

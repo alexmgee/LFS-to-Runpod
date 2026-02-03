@@ -6,6 +6,8 @@ from .types import Panel
 
 import lichtfeld as lf
 
+_ACTIVE_TRAINING_STATES = ("running", "paused")
+
 
 def _fmt_count(n: int) -> str:
     if n >= 1_000_000:
@@ -71,12 +73,11 @@ class StatusBarPanel(Panel):
             current_iter = lf.trainer_current_iteration()
             base = "Resume" if current_iter > 0 else "Ready"
             return f"{base} ({strat_name}/{method})", p.success
-        if state == "finished":
-            reason = lf.finish_reason()
-            if reason == "completed":
-                return f"Complete ({strat_name}/{method})", p.success
-            if reason == "stopped":
-                return f"Stopped ({strat_name}/{method})", p.text_dim
+        if state == "completed":
+            return f"Complete ({strat_name}/{method})", p.success
+        if state == "stopped":
+            return f"Stopped ({strat_name}/{method})", p.text_dim
+        if state == "error":
             return f"Error ({strat_name}/{method})", p.error
 
         return "Dataset", p.text_dim
@@ -86,7 +87,7 @@ class StatusBarPanel(Panel):
         if content_type != "dataset":
             return False
         state = lf.trainer_state()
-        return state in ("running", "paused", "finished")
+        return state in _ACTIVE_TRAINING_STATES
 
     def _draw_training_progress(self, layout, p):
         layout.same_line(spacing=20)

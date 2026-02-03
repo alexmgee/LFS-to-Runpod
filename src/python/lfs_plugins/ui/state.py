@@ -32,7 +32,7 @@ class AppState:
 
     Training State:
         is_training: Whether training is currently running
-        trainer_state: Current trainer state string ("idle", "ready", "running", "paused", "stopping", "finished")
+        trainer_state: Current trainer state string ("idle", "ready", "running", "paused", "stopping", "completed", "stopped", "error")
         has_trainer: Whether a trainer is loaded
         iteration: Current training iteration (C++ throttled)
         max_iterations: Maximum iterations target

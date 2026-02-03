@@ -543,12 +543,11 @@ namespace lfs::vis {
             python::update_training_state(true, "running");
         });
 
-        state::TrainingCompleted::when([](const auto&) {
-            python::update_training_state(false, "finished");
-        });
-
-        state::TrainingStopped::when([](const auto&) {
-            python::update_training_state(false, "stopping");
+        state::TrainingCompleted::when([](const auto& event) {
+            const char* state = !event.success    ? "error"
+                              : event.user_stopped ? "stopped"
+                                                   : "completed";
+            python::update_training_state(false, state);
         });
 
         internal::TrainerReady::when([this](const auto&) {
