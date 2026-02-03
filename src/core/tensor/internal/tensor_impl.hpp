@@ -26,6 +26,8 @@
 #include "tensor_functors.hpp"
 #include "tensor_ops.hpp"
 
+#include "core/export.hpp"
+
 namespace lfs::core {
 
     class TensorError;
@@ -142,7 +144,7 @@ namespace lfs::core {
         Multinomial = 10
     };
 
-    class TensorShape {
+    class LFS_CORE_API TensorShape {
     private:
         std::vector<size_t> dims_;
         size_t total_elements_ = 1;
@@ -239,7 +241,7 @@ namespace lfs::core {
             args;
     };
 
-    class RandomGenerator {
+    class LFS_CORE_API RandomGenerator {
     public:
         static RandomGenerator& instance();
         void manual_seed(uint64_t seed);
@@ -267,7 +269,7 @@ namespace lfs::core {
 
 namespace lfs::core {
 
-    class Tensor {
+    class LFS_CORE_API Tensor {
     private:
         void* data_ = nullptr;
         std::shared_ptr<void> data_owner_;
@@ -1804,7 +1806,7 @@ namespace lfs::core {
 
     // ============= TensorRowProxy for operator[] =============
     // Implementations in tensor_row_proxy.cpp (except template methods)
-    class TensorRowProxy {
+    class LFS_CORE_API TensorRowProxy {
     private:
         Tensor* tensor_;
         size_t row_index_;
@@ -1967,7 +1969,7 @@ namespace lfs::core {
     }
 
     // Helper classes
-    class MaskedTensorProxy {
+    class LFS_CORE_API MaskedTensorProxy {
     private:
         const Tensor* tensor_;
         Tensor mask_;
@@ -1982,7 +1984,7 @@ namespace lfs::core {
         operator Tensor() const;
     };
 
-    class TensorIndexer {
+    class LFS_CORE_API TensorIndexer {
     private:
         Tensor* tensor_;
         std::vector<Tensor> indices_;
@@ -1997,7 +1999,7 @@ namespace lfs::core {
         operator Tensor() const;
     };
 
-    class TensorError : public std::runtime_error {
+    class LFS_CORE_API TensorError : public std::runtime_error {
     public:
         TensorError(const std::string& msg, const Tensor* t = nullptr);
         const std::string& tensor_info() const { return tensor_info_; }
@@ -2007,7 +2009,7 @@ namespace lfs::core {
     };
 
     // Memory info
-    class MemoryInfo {
+    class LFS_CORE_API MemoryInfo {
     public:
         size_t free_bytes = 0;
         size_t total_bytes = 0;

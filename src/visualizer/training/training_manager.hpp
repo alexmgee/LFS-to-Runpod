@@ -57,7 +57,6 @@ namespace lfs::vis {
         void resumeTraining();
         void stopTraining();
         void requestSaveCheckpoint();
-        bool resetTraining();
 
         // Temporary pause (for camera movement - doesn't change UI state)
         void pauseTrainingTemporary();
@@ -111,7 +110,7 @@ namespace lfs::vis {
 
         // Camera access
         std::shared_ptr<const lfs::core::Camera> getCamById(int camId) const;
-        std::vector<std::shared_ptr<const lfs::core::Camera>> getCamList() const;
+        std::vector<std::shared_ptr<lfs::core::Camera>> getCamList() const;
 
         // Pending parameters (editable in Ready state, applied on start)
         lfs::core::param::OptimizationParameters& getEditableOptParams() { return pending_opt_params_; }
@@ -149,7 +148,7 @@ namespace lfs::vis {
         std::mutex completion_mutex_;
         bool training_complete_ = false;
 
-        // Loss buffer
+        static constexpr int COMPLETION_TIMEOUT_SEC = 30;
         static constexpr int MAX_LOSS_POINTS = 200;
         std::deque<float> loss_buffer_;
         mutable std::mutex loss_buffer_mutex_;

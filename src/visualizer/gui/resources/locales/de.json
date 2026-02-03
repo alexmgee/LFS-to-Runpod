@@ -450,7 +450,8 @@
     "gaussian_rings": "Gaussian Ringe",
     "center_markers": "Mittelpunktmarkierungen",
     "perspective": "Perspektive (O)",
-    "orthographic": "Orthografisch (O)"
+    "orthographic": "Orthografisch (O)",
+    "sequencer": "Sequenzer"
   },
 
   "transform": {
@@ -605,6 +606,7 @@
     "loss": "Verlust:",
     "gaussians_count": "%s Gaussians",
     "exporting": "Exportiere %s...",
+    "exporting_video": "Exportiere Video...",
     "importing": "Importiere %s...",
     "import_complete": "Import abgeschlossen: %zu Bilder, %zu Punkte",
     "import_failed": "Import fehlgeschlagen: %s",
@@ -712,6 +714,9 @@
   },
 
   "image_preview": {
+    "image_section": "BILD",
+    "file_section": "DATEI",
+    "view_section": "ANSICHT",
     "view": "Ansicht",
     "navigate": "Navigieren",
     "fit_to_window": "An Fenster anpassen",

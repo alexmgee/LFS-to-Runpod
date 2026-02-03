@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "core/camera.hpp"
+#include "core/cuda/undistort/undistort.hpp"
 #include "core/image_io.hpp"
+#include "core/image_loader.hpp"
 #include "core/logger.hpp"
-#include "io/cache_image_loader.hpp"
 #include <cassert>
 #include <cuda_runtime.h>
 
@@ -250,14 +251,13 @@ namespace lfs::core {
     }
 
     Tensor Camera::load_and_get_image(int resize_factor, int max_width) {
-        auto& loader = lfs::io::CacheLoader::getInstance();
-        lfs::io::LoadParams params{
+        const ImageLoadParams params{
+            .path = _image_path,
             .resize_factor = resize_factor,
             .max_width = max_width,
-            .cuda_stream = _stream,
-            .undistort = _undistort_prepared ? &_undistort_params : nullptr};
+            .stream = _stream};
 
-        auto image = loader.load_cached_image(_image_path, params);
+        auto image = load_image_cached(params);
 
         const auto shape = image.shape();
         _image_width = shape[2];
@@ -362,13 +362,13 @@ namespace lfs::core {
             return Tensor();
         }
 
-        auto& loader = lfs::io::CacheLoader::getInstance();
-        const lfs::io::LoadParams params{
+        const ImageLoadParams params{
+            .path = _mask_path,
             .resize_factor = resize_factor,
             .max_width = max_width,
-            .cuda_stream = _stream};
+            .stream = _stream};
 
-        auto mask = loader.load_cached_image(_mask_path, params);
+        auto mask = load_image_cached(params);
 
         if (mask.device() != Device::CUDA) {
             mask = mask.to(Device::CUDA, _stream);

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include "core/point_cloud.hpp"
 #include "core/tensor.hpp"
 
@@ -35,7 +36,7 @@ namespace lfs::core {
      *
      * Note: Gradients are managed by AdamOptimizer, not SplatData.
      */
-    class SplatData {
+    class LFS_CORE_API SplatData {
     public:
         SplatData() = default;
         ~SplatData();
@@ -139,16 +140,11 @@ namespace lfs::core {
         // Soft deletion mask: bool tensor [N], true = hidden from rendering
         Tensor _deleted;
 
-        // Allow free functions in splat_data_export.cpp and splat_data_transform.cpp
-        // to access private members
-        friend void save_ply(const SplatData&, const std::filesystem::path&, int, bool, std::string);
-        friend std::filesystem::path save_sog(const SplatData&, const std::filesystem::path&, int, int, bool);
-        friend PointCloud to_point_cloud(const SplatData&);
-        friend std::vector<std::string> get_attribute_names(const SplatData&);
-        friend SplatData& transform(SplatData&, const glm::mat4&);
-        friend SplatData crop_by_cropbox(const SplatData&, const lfs::geometry::BoundingBox&, bool);
-        friend SplatData extract_by_mask(const SplatData&, const Tensor&);
-        friend void random_choose(SplatData&, int, int);
+        // Allow free functions in splat_data_transform.cpp to access private members
+        friend LFS_CORE_API SplatData& transform(SplatData&, const glm::mat4&);
+        friend LFS_CORE_API SplatData crop_by_cropbox(const SplatData&, const lfs::geometry::BoundingBox&, bool);
+        friend LFS_CORE_API SplatData extract_by_mask(const SplatData&, const Tensor&);
+        friend LFS_CORE_API void random_choose(SplatData&, int, int);
     };
 
     // ========== Free function: Factory ==========
@@ -161,7 +157,7 @@ namespace lfs::core {
      * @param capacity If > 0, pre-allocate for this many gaussians (bypasses memory pool)
      * @return SplatData on success, error string on failure
      */
-    std::expected<SplatData, std::string> init_model_from_pointcloud(
+    LFS_CORE_API std::expected<SplatData, std::string> init_model_from_pointcloud(
         const param::TrainingParameters& params,
         Tensor scene_center,
         const PointCloud& point_cloud,

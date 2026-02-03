@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include <cstdint>
 #include <glm/glm.hpp>
 
@@ -19,10 +20,10 @@ namespace lfs::core {
     };
 
     /// Compute the centroid of selected splats
-    glm::vec3 compute_selection_center(const SplatData& splat_data, const Tensor& selection_mask);
+    LFS_CORE_API glm::vec3 compute_selection_center(const SplatData& splat_data, const Tensor& selection_mask);
 
     /// Mirror selected gaussians in-place (positions, rotations, SH coefficients)
-    void mirror_gaussians(SplatData& splat_data,
+    LFS_CORE_API void mirror_gaussians(SplatData& splat_data,
                           const Tensor& selection_mask,
                           MirrorAxis axis,
                           const glm::vec3& center);

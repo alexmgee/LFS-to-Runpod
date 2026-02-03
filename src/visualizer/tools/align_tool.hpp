@@ -5,8 +5,6 @@
 #pragma once
 
 #include "tool_base.hpp"
-#include <glm/glm.hpp>
-#include <vector>
 
 namespace lfs::vis::tools {
 
@@ -23,18 +21,11 @@ namespace lfs::vis::tools {
         void update(const ToolContext& ctx) override;
         void renderUI(const lfs::vis::gui::UIContext& ui_ctx, bool* p_open) override;
 
-        bool handleMouseButton(int button, int action, double x, double y, const ToolContext& ctx);
-
     protected:
         void onEnabledChanged(bool enabled) override;
 
     private:
-        std::vector<glm::vec3> picked_points_;
         const ToolContext* tool_context_ = nullptr;
-
-        void reset();
-        void applyAlignment(const ToolContext& ctx);
-        glm::vec3 unprojectScreenPoint(double x, double y, const ToolContext& ctx);
     };
 
 } // namespace lfs::vis::tools

@@ -85,4 +85,20 @@ namespace lfs::io {
      */
     PointCloud read_colmap_point_cloud_text(const std::filesystem::path& filepath);
 
+    /**
+     * @brief Read COLMAP cameras only (no image file validation required)
+     * @param sparse_path Path to COLMAP sparse reconstruction folder
+     * @param scale_factor Scale factor for camera intrinsics (default: 1.0)
+     * @return Result containing tuple of (vector of Camera, scene_center tensor [3])
+     *
+     * Unlike read_colmap_cameras_and_images, this function:
+     * - Does not require actual image files to exist
+     * - Skips mask file lookup
+     * - Sets empty image_path and mask_path on cameras
+     * - Computes scene center from camera positions
+     */
+    Result<std::tuple<std::vector<std::shared_ptr<Camera>>, Tensor>>
+    read_colmap_cameras_only(const std::filesystem::path& sparse_path,
+                             float scale_factor = 1.0f);
+
 } // namespace lfs::io

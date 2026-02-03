@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -59,7 +60,7 @@ namespace lfs::io {
         std::chrono::steady_clock::time_point last_access;
     };
 
-    class CacheLoader {
+    class LFS_IO_API CacheLoader {
     public:
         enum class CacheMode { Undetermined,
                                NoCache,

@@ -58,7 +58,7 @@ namespace lfs::vis::gui {
         glm::vec3 computeLocalPivot(
             const Scene& scene,
             NodeId target_id,
-            panels::PivotMode mode,
+            PivotMode mode,
             GizmoTargetType type) {
 
             const auto* node = scene.getNodeById(target_id);
@@ -107,8 +107,8 @@ namespace lfs::vis::gui {
             const std::string& name,
             const glm::vec3& pivot_world,
             const glm::vec3& pivot_local,
-            panels::TransformSpace space,
-            panels::PivotMode pivot_mode,
+            TransformSpace space,
+            PivotMode pivot_mode,
             ImGuizmo::OPERATION operation) {
 
             GizmoTransformContext ctx;
@@ -116,7 +116,7 @@ namespace lfs::vis::gui {
             ctx.target_names.push_back(name);
             ctx.pivot_world = pivot_world;
             ctx.pivot_local = pivot_local;
-            ctx.use_world_space = (space == panels::TransformSpace::World);
+            ctx.use_world_space = (space == TransformSpace::World);
             ctx.pivot_mode = pivot_mode;
             ctx.operation = operation;
 
@@ -153,8 +153,8 @@ namespace lfs::vis::gui {
             const std::string& name,
             const glm::vec3& pivot_world,
             const glm::vec3& pivot_local,
-            panels::TransformSpace space,
-            panels::PivotMode pivot_mode,
+            TransformSpace space,
+            PivotMode pivot_mode,
             ImGuizmo::OPERATION operation) {
 
             GizmoTransformContext ctx;
@@ -162,7 +162,7 @@ namespace lfs::vis::gui {
             ctx.target_names.push_back(name);
             ctx.pivot_world = pivot_world;
             ctx.pivot_local = pivot_local;
-            ctx.use_world_space = (space == panels::TransformSpace::World);
+            ctx.use_world_space = (space == TransformSpace::World);
             ctx.pivot_mode = pivot_mode;
             ctx.operation = operation;
 

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include "core/path_utils.hpp"
 #include <expected>
 #include <filesystem>
@@ -78,7 +79,7 @@ namespace lfs::io {
     }
 
     /// Structured error with code, message, and optional path
-    struct Error {
+    struct LFS_IO_API Error {
         ErrorCode code;
         std::string message;
         std::filesystem::path path;

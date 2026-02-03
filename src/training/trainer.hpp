@@ -77,13 +77,11 @@ namespace lfs::training {
                 std::optional<std::tuple<std::vector<std::string>, std::vector<std::string>>> provided_splits);
 
         /**
-         * @brief New constructor - takes Scene reference (Scene owns all data)
+         * @brief Constructor - takes Scene reference (Scene owns all data)
          *
          * Scene provides:
          * - Training model via getTrainingModel() (SplatData)
-         * - Train/val cameras via getTrainCameras()/getValCameras()
-         *
-         * Strategy type ("mcmc" or "default") is determined by params during initialize()
+         * - Cameras via getAllCameras() (from CAMERA nodes)
          */
         Trainer(lfs::vis::Scene& scene);
 
@@ -119,6 +117,11 @@ namespace lfs::training {
         bool is_training_complete() const { return training_complete_.load(); }
         bool has_stopped() const { return stop_requested_.load(); }
 
+        // Set Python script paths to execute once before training; scripts register per-iteration callbacks.
+        void set_python_scripts(std::vector<std::filesystem::path> scripts) {
+            python_scripts_ = std::move(scripts);
+        }
+
         // Get current training state
         int get_current_iteration() const { return current_iteration_.load(); }
         float get_current_loss() const { return current_loss_.load(); }
@@ -126,11 +129,17 @@ namespace lfs::training {
         // just for viewer to get model
         const IStrategy& get_strategy() const { return *strategy_; }
 
+        // Mutable access for controlled callbacks (e.g., Python control layer)
+        IStrategy& get_strategy_mutable() { return *strategy_; }
+
         // Allow viewer to lock for rendering
         std::shared_mutex& getRenderMutex() const { return render_mutex_; }
 
         const lfs::core::param::TrainingParameters& getParams() const { return params_; }
         void setParams(const lfs::core::param::TrainingParameters& params);
+
+        // Get Scene (for Python bindings in headless mode)
+        lfs::vis::Scene* getScene() const { return scene_; }
 
         /// Apply PPISP correction to a rendered image for viewport display
         /// @param rgb rendered image [C,H,W] or [H,W,C]
@@ -152,6 +161,7 @@ namespace lfs::training {
         std::unique_ptr<PPISP> takePPISP() { return std::move(ppisp_); }
         std::unique_ptr<PPISPControllerPool> takePPISPControllerPool() { return std::move(ppisp_controller_pool_); }
 
+        // Checkpoint methods
         std::expected<void, std::string> save_checkpoint(int iteration);
         std::expected<int, std::string> load_checkpoint(const std::filesystem::path& checkpoint_path);
         void save_final_ply_and_checkpoint(int iteration);
@@ -316,5 +326,8 @@ namespace lfs::training {
         std::function<void()> callback_;
         std::atomic<bool> callback_busy_{false};
         cudaStream_t callback_stream_ = nullptr;
+
+        // Python control scripts (file paths) to execute before training starts
+        std::vector<std::filesystem::path> python_scripts_;
     };
 } // namespace lfs::training

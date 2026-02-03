@@ -120,6 +120,7 @@ namespace lfs::vis {
         // Helpers
         bool isInViewport(double x, double y) const;
         bool shouldCameraHandleInput() const;
+        void selectCameraByUid(int uid);
         void updateCameraSpeed(bool increase);
         void updateZoomSpeed(bool increase);
         void publishCameraMove();

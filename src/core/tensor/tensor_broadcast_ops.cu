@@ -591,6 +591,14 @@ namespace lfs::core::tensor_ops {
         const int*, const int*, int*,
         const size_t*, const size_t*, const size_t*,
         size_t, size_t, size_t, size_t, ops::mod_op, cudaStream_t);
+    template void launch_broadcast_binary<unsigned char, unsigned char, ops::mod_op>(
+        const unsigned char*, const unsigned char*, unsigned char*,
+        const size_t*, const size_t*, const size_t*,
+        size_t, size_t, size_t, size_t, ops::mod_op, cudaStream_t);
+    template void launch_broadcast_binary<__half, __half, ops::mod_op>(
+        const __half*, const __half*, __half*,
+        const size_t*, const size_t*, const size_t*,
+        size_t, size_t, size_t, size_t, ops::mod_op, cudaStream_t);
 
     // Comparison operations for additional types
     template void launch_broadcast_binary<int64_t, unsigned char, ops::greater_op>(
@@ -660,5 +668,25 @@ namespace lfs::core::tensor_ops {
         const __half*, const __half*, unsigned char*,
         const size_t*, const size_t*, const size_t*,
         size_t, size_t, size_t, size_t, ops::logical_or_op, cudaStream_t);
+    template void launch_broadcast_binary<float, unsigned char, ops::logical_xor_op>(
+        const float*, const float*, unsigned char*,
+        const size_t*, const size_t*, const size_t*,
+        size_t, size_t, size_t, size_t, ops::logical_xor_op, cudaStream_t);
+    template void launch_broadcast_binary<int, unsigned char, ops::logical_xor_op>(
+        const int*, const int*, unsigned char*,
+        const size_t*, const size_t*, const size_t*,
+        size_t, size_t, size_t, size_t, ops::logical_xor_op, cudaStream_t);
+    template void launch_broadcast_binary<unsigned char, unsigned char, ops::logical_xor_op>(
+        const unsigned char*, const unsigned char*, unsigned char*,
+        const size_t*, const size_t*, const size_t*,
+        size_t, size_t, size_t, size_t, ops::logical_xor_op, cudaStream_t);
+    template void launch_broadcast_binary<int64_t, unsigned char, ops::logical_xor_op>(
+        const int64_t*, const int64_t*, unsigned char*,
+        const size_t*, const size_t*, const size_t*,
+        size_t, size_t, size_t, size_t, ops::logical_xor_op, cudaStream_t);
+    template void launch_broadcast_binary<__half, unsigned char, ops::logical_xor_op>(
+        const __half*, const __half*, unsigned char*,
+        const size_t*, const size_t*, const size_t*,
+        size_t, size_t, size_t, size_t, ops::logical_xor_op, cudaStream_t);
 
 } // namespace lfs::core::tensor_ops

@@ -1,0 +1,89 @@
+/* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
+ * SPDX-License-Identifier: GPL-3.0-or-later */
+
+#pragma once
+
+#include "visualizer/rendering/rendering_manager.hpp"
+
+#include <array>
+#include <functional>
+#include <memory>
+#include <optional>
+
+namespace lfs::core {
+    class Tensor;
+}
+
+namespace lfs::vis {
+
+    struct ViewInfo {
+        std::array<float, 9> rotation;
+        std::array<float, 3> translation;
+        int width;
+        int height;
+        float fov;
+    };
+
+    struct ViewportRender {
+        std::shared_ptr<lfs::core::Tensor> image;
+        std::shared_ptr<lfs::core::Tensor> screen_positions;
+    };
+
+    using GetViewCallback = std::function<std::optional<ViewInfo>()>;
+    using GetViewportRenderCallback = std::function<std::optional<ViewportRender>()>;
+
+    void set_view_callback(GetViewCallback callback);
+    void set_viewport_render_callback(GetViewportRenderCallback callback);
+    [[nodiscard]] std::optional<ViewInfo> get_current_view_info();
+    [[nodiscard]] std::optional<ViewportRender> get_viewport_render();
+
+    struct RenderSettingsProxy {
+        float focal_length_mm = 35.0f;
+        float scaling_modifier = 1.0f;
+        bool antialiasing = false;
+        bool mip_filter = false;
+        int sh_degree = 3;
+        float render_scale = 1.0f;
+        bool show_crop_box = false;
+        bool use_crop_box = false;
+        bool desaturate_unselected = false;
+        std::array<float, 3> background_color{0.0f, 0.0f, 0.0f};
+        bool show_coord_axes = false;
+        float axes_size = 2.0f;
+        bool show_grid = true;
+        int grid_plane = 1;
+        float grid_opacity = 0.5f;
+        bool point_cloud_mode = false;
+        float voxel_size = 0.03f;
+        bool show_rings = false;
+        float ring_width = 0.01f;
+        bool show_center_markers = false;
+        bool show_camera_frustums = true;
+        float camera_frustum_scale = 0.25f;
+        std::array<float, 3> train_camera_color{1.0f, 1.0f, 1.0f};
+        std::array<float, 3> eval_camera_color{1.0f, 0.0f, 0.0f};
+        bool show_pivot = false;
+        float split_position = 0.5f;
+        bool gut = false;
+        bool equirectangular = false;
+        bool orthographic = false;
+        float ortho_scale = 100.0f;
+        std::array<float, 3> selection_color_committed{0.859f, 0.325f, 0.325f};
+        std::array<float, 3> selection_color_preview{0.0f, 0.871f, 0.298f};
+        std::array<float, 3> selection_color_center_marker{0.0f, 0.604f, 0.733f};
+        bool depth_clip_enabled = false;
+        float depth_clip_far = 100.0f;
+
+        bool apply_appearance_correction = false;
+        int ppisp_mode = 1;
+        PPISPOverrides ppisp;
+    };
+
+    using GetRenderSettingsCallback = std::function<std::optional<RenderSettingsProxy>()>;
+    using SetRenderSettingsCallback = std::function<void(const RenderSettingsProxy&)>;
+
+    void set_render_settings_callbacks(GetRenderSettingsCallback get_cb, SetRenderSettingsCallback set_cb);
+    [[nodiscard]] std::optional<RenderSettingsProxy> get_render_settings();
+    void update_render_settings(const RenderSettingsProxy& settings);
+
+} // namespace lfs::vis

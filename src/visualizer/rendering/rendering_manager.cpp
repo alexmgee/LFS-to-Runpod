@@ -957,9 +957,51 @@ namespace lfs::vis {
         glBindFramebuffer(GL_FRAMEBUFFER, current_fbo);
     }
 
-    void RenderingManager::renderFrame(const RenderContext& context, SceneManager* scene_manager) {
-        framerate_controller_.beginFrame();
+    bool RenderingManager::renderPreviewFrame(SceneManager* const scene_manager,
+                                              const glm::mat3& rotation,
+                                              const glm::vec3& position,
+                                              const float fov,
+                                              const unsigned int fbo,
+                                              [[maybe_unused]] const unsigned int texture,
+                                              const int width, const int height) {
+        if (!initialized_ || !engine_)
+            return false;
 
+        const auto* const model = scene_manager ? scene_manager->getModelForRendering() : nullptr;
+        if (!model || model->size() == 0)
+            return false;
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, width, height);
+        const auto& bg = settings_.background_color;
+        glClearColor(bg.r, bg.g, bg.b, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        const lfs::rendering::RenderRequest request{
+            .viewport = {rotation, position, {width, height}, fov, false, 1.0f},
+            .scaling_modifier = settings_.scaling_modifier,
+            .antialiasing = false,
+            .sh_degree = 0,
+            .background_color = bg,
+            .crop_box = std::nullopt,
+            .point_cloud_mode = settings_.point_cloud_mode,
+            .voxel_size = settings_.voxel_size,
+            .gut = false,
+            .show_rings = false,
+            .ring_width = 0.0f,
+            .show_center_markers = false};
+
+        if (const auto result = engine_->renderGaussians(*model, request)) {
+            engine_->presentToScreen(*result, {0, 0}, {width, height});
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            return true;
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return false;
+    }
+
+    void RenderingManager::renderFrame(const RenderContext& context, SceneManager* scene_manager) {
         if (!initialized_) {
             initialize();
         }
@@ -986,7 +1028,6 @@ namespace lfs::vis {
             // Still clear to prevent trails
             glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            framerate_controller_.endFrame();
             return;
         }
 
@@ -1122,10 +1163,13 @@ namespace lfs::vis {
         if (context.viewport_region) {
             glDisable(GL_SCISSOR_TEST);
         }
-        framerate_controller_.endFrame();
     }
 
     void RenderingManager::doFullRender(const RenderContext& context, SceneManager* scene_manager, const lfs::core::SplatData* model) {
+        const bool count_frame = model != nullptr;
+        if (count_frame) {
+            framerate_controller_.beginFrame();
+        }
         LOG_TIMER_TRACE("RenderingManager::doFullRender");
 
         render_count_++;
@@ -1174,6 +1218,9 @@ namespace lfs::vis {
             }
 
             renderOverlays(context);
+            if (count_frame) {
+                framerate_controller_.endFrame();
+            }
             return;
         }
 
@@ -1218,7 +1265,75 @@ namespace lfs::vis {
             }
 
             if (scene_state.point_cloud && scene_state.point_cloud->size() > 0) {
-                LOG_TRACE("Rendering point cloud with {} points", scene_state.point_cloud->size());
+                const lfs::core::PointCloud* point_cloud_to_render = scene_state.point_cloud;
+
+                // Apply cropbox filter (GPU-accelerated, cached)
+                for (const auto& cb : scene_state.cropboxes) {
+                    if (!cb.data || (!cb.data->enabled && !settings_.show_crop_box))
+                        continue;
+
+                    const bool cache_valid = cached_filtered_point_cloud_ &&
+                                             cached_source_point_cloud_ == scene_state.point_cloud &&
+                                             cached_cropbox_transform_ == cb.world_transform &&
+                                             cached_cropbox_min_ == cb.data->min &&
+                                             cached_cropbox_max_ == cb.data->max &&
+                                             cached_cropbox_inverse_ == cb.data->inverse;
+
+                    if (!cache_valid) {
+                        const auto& means = scene_state.point_cloud->means;
+                        const auto& colors = scene_state.point_cloud->colors;
+                        const size_t num_points = scene_state.point_cloud->size();
+                        const glm::mat4 m = glm::inverse(cb.world_transform);
+                        const auto device = means.device();
+
+                        // GLM column-major -> row-major for tensor matmul
+                        const auto transform = lfs::core::Tensor::from_vector({m[0][0], m[1][0], m[2][0], m[3][0],
+                                                                               m[0][1], m[1][1], m[2][1], m[3][1],
+                                                                               m[0][2], m[1][2], m[2][2], m[3][2],
+                                                                               m[0][3], m[1][3], m[2][3], m[3][3]},
+                                                                              {4, 4}, device);
+
+                        // Transform and filter on GPU
+                        const auto ones = lfs::core::Tensor::ones({num_points, 1}, device);
+                        const auto local_pos = transform.mm(means.cat(ones, 1).t()).t();
+
+                        const auto x = local_pos.slice(1, 0, 1).squeeze(1);
+                        const auto y = local_pos.slice(1, 1, 2).squeeze(1);
+                        const auto z = local_pos.slice(1, 2, 3).squeeze(1);
+
+                        auto mask = (x >= cb.data->min.x) && (x <= cb.data->max.x) &&
+                                    (y >= cb.data->min.y) && (y <= cb.data->max.y) &&
+                                    (z >= cb.data->min.z) && (z <= cb.data->max.z);
+                        if (cb.data->inverse)
+                            mask = mask.logical_not();
+
+                        const auto indices = mask.nonzero().squeeze(1);
+                        if (indices.size(0) > 0) {
+                            cached_filtered_point_cloud_ = std::make_unique<lfs::core::PointCloud>(
+                                means.index_select(0, indices), colors.index_select(0, indices));
+                        } else {
+                            cached_filtered_point_cloud_.reset();
+                        }
+
+                        cached_source_point_cloud_ = scene_state.point_cloud;
+                        cached_cropbox_transform_ = cb.world_transform;
+                        cached_cropbox_min_ = cb.data->min;
+                        cached_cropbox_max_ = cb.data->max;
+                        cached_cropbox_inverse_ = cb.data->inverse;
+                    }
+
+                    if (cached_filtered_point_cloud_) {
+                        point_cloud_to_render = cached_filtered_point_cloud_.get();
+                    } else {
+                        if (count_frame) {
+                            framerate_controller_.endFrame();
+                        }
+                        return;
+                    }
+                    break;
+                }
+
+                LOG_TRACE("Rendering point cloud with {} points", point_cloud_to_render->size());
 
                 // Get point cloud transform from scene state
                 glm::mat4 point_cloud_transform(1.0f);
@@ -1319,6 +1434,9 @@ namespace lfs::vis {
 
         // Always render overlays
         renderOverlays(context);
+        if (count_frame) {
+            framerate_controller_.endFrame();
+        }
     }
 
     std::optional<lfs::rendering::SplitViewRequest>
@@ -1580,101 +1698,68 @@ namespace lfs::vis {
             }
         }
 
-        // Camera frustums - requires both master toggle AND scene graph visibility
+        // Camera frustums - read directly from scene nodes (no trainer dependency)
         if (settings_.show_camera_frustums && engine_ && context.scene_manager) {
-            // Check which cameras are visible in the scene graph
-            auto visible_indices = context.scene_manager->getScene().getVisibleCameraIndices();
+            auto cameras = context.scene_manager->getScene().getVisibleCameras();
 
-            // Only render frustums if there are visible camera nodes
-            if (!visible_indices.empty()) {
-                // Get cameras from scene manager's trainer
-                auto* trainer_manager = context.scene_manager->getTrainerManager();
-                if (!trainer_manager || !trainer_manager->hasTrainer()) {
-                    // No trainer, can't get camera data
-                    return;
-                }
-
-                auto all_cameras = trainer_manager->getCamList();
-                LOG_TRACE("Retrieved {} cameras from trainer manager", all_cameras.size());
-
-                // Filter to only visible cameras
-                std::vector<std::shared_ptr<const lfs::core::Camera>> cameras;
-                cameras.reserve(visible_indices.size());
-                for (size_t i = 0; i < all_cameras.size(); ++i) {
-                    if (visible_indices.contains(static_cast<int>(i))) {
-                        cameras.push_back(all_cameras[i]);
-                    }
-                }
-                LOG_TRACE("Filtered to {} visible cameras", cameras.size());
-
-                if (!cameras.empty()) {
-                    // Find the actual index for the hovered camera ID
-                    int highlight_index = -1;
-                    if (hovered_camera_id_ >= 0) {
-                        for (size_t i = 0; i < cameras.size(); ++i) {
-                            if (cameras[i]->uid() == hovered_camera_id_) {
-                                highlight_index = static_cast<int>(i);
-                                break;
-                            }
+            if (!cameras.empty()) {
+                int highlight_index = -1;
+                if (hovered_camera_id_ >= 0) {
+                    for (size_t i = 0; i < cameras.size(); ++i) {
+                        if (cameras[i]->uid() == hovered_camera_id_) {
+                            highlight_index = static_cast<int>(i);
+                            break;
                         }
                     }
+                }
 
-                    // Get scene transform from visible nodes (applies alignment transform)
-                    glm::mat4 scene_transform(1.0f);
-                    auto visible_transforms = context.scene_manager->getScene().getVisibleNodeTransforms();
-                    if (!visible_transforms.empty()) {
-                        scene_transform = visible_transforms[0];
-                    }
+                glm::mat4 scene_transform(1.0f);
+                auto visible_transforms = context.scene_manager->getScene().getVisibleNodeTransforms();
+                if (!visible_transforms.empty()) {
+                    scene_transform = visible_transforms[0];
+                }
 
-                    // Render frustums with scene transform
-                    LOG_TRACE("Rendering {} camera frustums with scale {}, highlighted index: {} (ID: {})",
-                              cameras.size(), settings_.camera_frustum_scale, highlight_index, hovered_camera_id_);
+                LOG_TRACE("Rendering {} camera frustums with scale {}, highlighted index: {} (ID: {})",
+                          cameras.size(), settings_.camera_frustum_scale, highlight_index, hovered_camera_id_);
 
-                    auto frustum_result = engine_->renderCameraFrustumsWithHighlight(
-                        cameras, viewport,
+                auto frustum_result = engine_->renderCameraFrustumsWithHighlight(
+                    cameras, viewport,
+                    settings_.camera_frustum_scale,
+                    settings_.train_camera_color,
+                    settings_.eval_camera_color,
+                    highlight_index,
+                    scene_transform,
+                    settings_.equirectangular);
+
+                if (!frustum_result) {
+                    LOG_ERROR("Failed to render camera frustums: {}", frustum_result.error());
+                }
+
+                if (pick_requested_ && context.viewport_region) {
+                    pick_requested_ = false;
+
+                    auto pick_result = engine_->pickCameraFrustum(
+                        cameras,
+                        pending_pick_pos_,
+                        glm::vec2(context.viewport_region->x, context.viewport_region->y),
+                        glm::vec2(context.viewport_region->width, context.viewport_region->height),
+                        viewport,
                         settings_.camera_frustum_scale,
-                        settings_.train_camera_color,
-                        settings_.eval_camera_color,
-                        highlight_index,
-                        scene_transform,
-                        settings_.equirectangular);
+                        scene_transform);
 
-                    if (!frustum_result) {
-                        LOG_ERROR("Failed to render camera frustums: {}", frustum_result.error());
-                    }
-
-                    // Perform picking if requested
-                    if (pick_requested_ && context.viewport_region) {
-                        pick_requested_ = false;
-
-                        auto pick_result = engine_->pickCameraFrustum(
-                            cameras,
-                            pending_pick_pos_,
-                            glm::vec2(context.viewport_region->x, context.viewport_region->y),
-                            glm::vec2(context.viewport_region->width, context.viewport_region->height),
-                            viewport,
-                            settings_.camera_frustum_scale,
-                            scene_transform);
-
-                        if (pick_result) {
-                            int cam_id = *pick_result;
-
-                            // Only process if camera ID actually changed
-                            if (cam_id != hovered_camera_id_) {
-                                int old_hover = hovered_camera_id_;
-                                hovered_camera_id_ = cam_id;
-
-                                // Only mark dirty on actual change
-                                markDirty();
-                                LOG_DEBUG("Camera hover changed: {} -> {}", old_hover, cam_id);
-                            }
-                        } else if (hovered_camera_id_ != -1) {
-                            // Lost hover - only update if we had a hover before
+                    if (pick_result) {
+                        int cam_id = *pick_result;
+                        if (cam_id != hovered_camera_id_) {
                             int old_hover = hovered_camera_id_;
-                            hovered_camera_id_ = -1;
+                            hovered_camera_id_ = cam_id;
                             markDirty();
-                            LOG_DEBUG("Camera hover lost (was ID: {})", old_hover);
+                            LOG_DEBUG("Camera hover changed: {} -> {}", old_hover, cam_id);
                         }
+                    } else if (hovered_camera_id_ != -1) {
+                        int old_hover = hovered_camera_id_;
+                        hovered_camera_id_ = -1;
+                        markDirty();
+                        LOG_DEBUG("Camera hover lost (was ID: {})", old_hover);
                     }
                 }
             }
@@ -1845,6 +1930,43 @@ namespace lfs::vis {
         hovered_gaussian_id_ = -1;
         preview_selection_ = nullptr;
         markDirty();
+    }
+
+    void RenderingManager::setRectPreview(float x0, float y0, float x1, float y1, bool add_mode) {
+        rect_preview_active_ = true;
+        rect_x0_ = x0;
+        rect_y0_ = y0;
+        rect_x1_ = x1;
+        rect_y1_ = y1;
+        rect_add_mode_ = add_mode;
+    }
+
+    void RenderingManager::clearRectPreview() {
+        rect_preview_active_ = false;
+    }
+
+    void RenderingManager::setPolygonPreview(const std::vector<std::pair<float, float>>& points, bool closed, bool add_mode) {
+        polygon_preview_active_ = true;
+        polygon_points_ = points;
+        polygon_closed_ = closed;
+        polygon_add_mode_ = add_mode;
+    }
+
+    void RenderingManager::clearPolygonPreview() {
+        polygon_preview_active_ = false;
+        polygon_points_.clear();
+        polygon_closed_ = false;
+    }
+
+    void RenderingManager::setLassoPreview(const std::vector<std::pair<float, float>>& points, bool add_mode) {
+        lasso_preview_active_ = true;
+        lasso_points_ = points;
+        lasso_add_mode_ = add_mode;
+    }
+
+    void RenderingManager::clearLassoPreview() {
+        lasso_preview_active_ = false;
+        lasso_points_.clear();
     }
 
     void RenderingManager::adjustSaturation(const float mouse_x, const float mouse_y, const float radius,

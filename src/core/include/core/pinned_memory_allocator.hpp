@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "core/export.hpp"
+
 #include <cstddef>
 #include <cuda_runtime.h>
 #include <memory>
@@ -30,7 +32,7 @@ namespace lfs::core {
      * - cudaMemcpyAsync can overlap with CPU work
      * - Reduced PCIe latency
      */
-    class PinnedMemoryAllocator {
+    class LFS_CORE_API PinnedMemoryAllocator {
     public:
         /**
          * @brief Get the singleton instance

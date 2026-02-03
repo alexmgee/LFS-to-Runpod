@@ -11,6 +11,7 @@ param(
     [switch]$SkipVerification,
     [switch]$SkipVcpkg,
     [switch]$SkipLibTorch,
+    [switch]$NoPythonBindings,
     [switch]$Clean,
     [switch]$Help
 )
@@ -25,21 +26,29 @@ This script automatically:
   1. Verifies build prerequisites (VS 2022, CUDA 12.8, CMake, Git)
   2. Sets up vcpkg in the parent directory
   3. Downloads LibTorch (Debug & Release) if missing
-  4. Configures and builds LichtFeld-Studio
+  4. Initializes git submodules
+  5. Configures and builds LichtFeld-Studio
 
 Options:
   -Configuration <Debug|Release>  Build configuration (default: Release)
   -SkipVerification               Skip environment verification
   -SkipVcpkg                      Skip vcpkg setup
   -SkipLibTorch                   Skip LibTorch download
+  -NoPythonBindings               Disable Python bindings (enabled by default, requires Python 3.12)
   -Clean                          Clean build directory before building
   -Help                           Show this help message
 
 Examples:
-  .\build_lichtfeld.ps1                        Build Release (default)
-  .\build_lichtfeld.ps1 -Configuration Debug   Build Debug
-  .\build_lichtfeld.ps1 -Clean                 Clean and rebuild
-  .\build_lichtfeld.ps1 -SkipLibTorch          Skip LibTorch download (if already present)
+  .\build_lichtfeld.ps1                            Build Release with Python bindings (default)
+  .\build_lichtfeld.ps1 -Configuration Debug       Build Debug with Python bindings
+  .\build_lichtfeld.ps1 -Clean                     Clean and rebuild
+  .\build_lichtfeld.ps1 -NoPythonBindings          Build without Python support
+  .\build_lichtfeld.ps1 -SkipLibTorch              Skip LibTorch download (if already present)
+
+Notes:
+  - Windows Long Path Support: If you encounter path-too-long errors, enable long paths:
+    Run as Administrator: New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+    Then restart your system.
 "@
     exit 0
 }
@@ -179,6 +188,7 @@ function Launch-VSDevEnvironment {
     if ($SkipVerification) { $ParamString += " -SkipVerification" }
     if ($SkipVcpkg) { $ParamString += " -SkipVcpkg" }
     if ($SkipLibTorch) { $ParamString += " -SkipLibTorch" }
+    if ($NoPythonBindings) { $ParamString += " -NoPythonBindings" }
     if ($Clean) { $ParamString += " -Clean" }
 
     # Create temp script to launch dev shell and run build
@@ -229,8 +239,10 @@ function Test-BuildEnvironment {
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""
 
+    $TotalChecks = if (-not $NoPythonBindings) { 8 } else { 7 }
+
     # Check 1: PowerShell Version
-    Write-Host "[1/7] Checking PowerShell..." -ForegroundColor Yellow
+    Write-Host "[1/$TotalChecks] Checking PowerShell..." -ForegroundColor Yellow
     $PSVer = $PSVersionTable.PSVersion
     if ($PSVer.Major -ge 5) {
         Write-Status "PowerShell" $true "v$($PSVer.Major).$($PSVer.Minor)"
@@ -241,7 +253,7 @@ function Test-BuildEnvironment {
     }
 
     # Check 2: Visual Studio / MSVC
-    Write-Host "[2/7] Checking Visual Studio..." -ForegroundColor Yellow
+    Write-Host "[2/$TotalChecks] Checking Visual Studio..." -ForegroundColor Yellow
     if (Test-Command "cl") {
         try {
             $ClVersion = & cl 2>&1 | Select-String "Version" | Select-Object -First 1
@@ -256,7 +268,7 @@ function Test-BuildEnvironment {
     }
 
     # Check 3: CMake
-    Write-Host "[3/7] Checking CMake..." -ForegroundColor Yellow
+    Write-Host "[3/$TotalChecks] Checking CMake..." -ForegroundColor Yellow
     if (Test-Command "cmake") {
         try {
             $CMakeVersion = (cmake --version | Select-Object -First 1) -replace 'cmake version ', ''
@@ -279,17 +291,17 @@ function Test-BuildEnvironment {
     }
 
     # Check 4: CUDA Toolkit
-    Write-Host "[4/7] Checking CUDA Toolkit 12.8..." -ForegroundColor Yellow
+    Write-Host "[4/$TotalChecks] Checking CUDA Toolkit 12.8..." -ForegroundColor Yellow
     if (Test-Command "nvcc") {
         try {
             $NvccOutput = nvcc --version 2>&1 | Select-String "release"
             $CudaVersion = ($NvccOutput -split "release ")[1] -split "," | Select-Object -First 1
 
-            if ($CudaVersion -match "12\.8") {
+            if ($CudaVersion -match "12\.") {
                 Write-Status "CUDA Toolkit (nvcc)" $true "v$CudaVersion"
             } else {
                 Write-Status "CUDA Toolkit (nvcc)" $false "v$CudaVersion" `
-                    "CUDA 12.8 is required (found $CudaVersion)" `
+                    "CUDA 12.x is required (found $CudaVersion)" `
                     "Download CUDA 12.8 from: https://developer.nvidia.com/cuda-12-8-0-download-archive"
             }
         } catch {
@@ -302,7 +314,7 @@ function Test-BuildEnvironment {
     }
 
     # Check 5: Git
-    Write-Host "[5/7] Checking Git..." -ForegroundColor Yellow
+    Write-Host "[5/$TotalChecks] Checking Git..." -ForegroundColor Yellow
     if (Test-Command "git") {
         try {
             $GitVersion = (git --version) -replace 'git version ', ''
@@ -317,7 +329,7 @@ function Test-BuildEnvironment {
     }
 
     # Check 6: Ninja (optional but recommended)
-    Write-Host "[6/7] Checking Ninja (optional)..." -ForegroundColor Yellow
+    Write-Host "[6/$TotalChecks] Checking Ninja (optional)..." -ForegroundColor Yellow
     if (Test-Command "ninja") {
         try {
             $NinjaVersion = ninja --version
@@ -326,12 +338,12 @@ function Test-BuildEnvironment {
             Write-Status "Ninja" $true "Found"
         }
     } else {
-        Write-Warning-Status "Ninja" "Not found (build will use fallback generator)" `
+        Write-Warning-Status "Ninja" "Not found (build will use Visual Studio generator)" `
             "Install via: choco install ninja OR download from https://github.com/ninja-build/ninja/releases"
     }
 
     # Check 7: Disk Space
-    Write-Host "[7/7] Checking disk space..." -ForegroundColor Yellow
+    Write-Host "[7/$TotalChecks] Checking disk space..." -ForegroundColor Yellow
     try {
         $Drive = (Get-Location).Drive
         $FreeSpaceGB = [math]::Round((Get-PSDrive $Drive.Name).Free / 1GB, 2)
@@ -350,9 +362,62 @@ function Test-BuildEnvironment {
         Write-Warning-Status "Disk Space" "Could not determine free space"
     }
 
+    # Check 8: Python (unless explicitly disabled)
+    if (-not $NoPythonBindings) {
+        Write-Host "[8/$TotalChecks] Checking Python 3.12..." -ForegroundColor Yellow
+        if (Test-Command "python") {
+            try {
+                $PythonVersion = python --version 2>&1
+                if ($PythonVersion -match "3\.12") {
+                    Write-Status "Python" $true $PythonVersion
+                } else {
+                    Write-Warning-Status "Python" "$PythonVersion (3.12 recommended)" `
+                        "Python 3.12 is recommended for best compatibility"
+                }
+            } catch {
+                Write-Status "Python" $true "Found (version check failed)"
+            }
+        } else {
+            Write-Status "Python" $false "" `
+                "Python not found in PATH" `
+                "Download Python 3.12 from: https://www.python.org/downloads/"
+        }
+    }
+
     Write-Host ""
 
     return $script:AllChecksPassed
+}
+
+# ============================================================================
+# Git Submodules Setup
+# ============================================================================
+
+function Setup-GitSubmodules {
+    Write-Host "================================================================" -ForegroundColor Cyan
+    Write-Host "Initializing Git Submodules" -ForegroundColor Cyan
+    Write-Host "================================================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    Push-Location $ProjectRoot
+    try {
+        # Check if libvterm submodule is initialized
+        $LibvtermPath = Join-Path $ProjectRoot "external\libvterm"
+        if (-not (Test-Path (Join-Path $LibvtermPath "src"))) {
+            Write-Host "Initializing git submodules..." -ForegroundColor Yellow
+            git submodule update --init --recursive
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "WARNING: Failed to initialize submodules" -ForegroundColor Yellow
+            } else {
+                Write-Host "Git submodules initialized successfully!" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "Git submodules already initialized." -ForegroundColor Green
+        }
+    } finally {
+        Pop-Location
+    }
+    Write-Host ""
 }
 
 # ============================================================================
@@ -376,15 +441,19 @@ function Setup-Vcpkg {
         }
         Write-Host "vcpkg cloned successfully!" -ForegroundColor Green
     } else {
-        Write-Host "vcpkg directory exists. Pulling latest changes..." -ForegroundColor Yellow
+        Write-Host "vcpkg directory exists. Updating..." -ForegroundColor Yellow
         Push-Location $VcpkgPath
         try {
-            git pull
+            # Fetch all refs first (needed for baseline resolution)
+            git fetch --all 2>&1 | Out-Null
+            git pull 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "WARNING: git pull failed, continuing with existing version" -ForegroundColor Yellow
             } else {
                 Write-Host "vcpkg updated successfully!" -ForegroundColor Green
             }
+        } catch {
+            Write-Host "WARNING: vcpkg update failed, continuing with existing version" -ForegroundColor Yellow
         } finally {
             Pop-Location
         }
@@ -509,12 +578,75 @@ function Setup-LibTorch {
 }
 
 # ============================================================================
+# Copy DLLs to Output Directory
+# ============================================================================
+
+function Copy-RequiredDLLs {
+    param([string]$BuildDir, [string]$Config)
+
+    Write-Host ""
+    Write-Host "Copying required DLLs to output directory..." -ForegroundColor Yellow
+
+    $OutputDir = Join-Path $BuildDir $Config
+
+    if (-not (Test-Path $OutputDir)) {
+        Write-Host "WARNING: Output directory not found: $OutputDir" -ForegroundColor Yellow
+        Write-Host "Skipping DLL copy (CMake POST_BUILD commands should handle this)" -ForegroundColor Gray
+        return
+    }
+
+    # DLLs that need to be copied from subdirectories (fallback if CMake POST_BUILD fails)
+    $DLLSources = @(
+        @{ Source = "src\core\event_bridge\$Config\lfs_event_bridge.dll"; Name = "lfs_event_bridge.dll" }
+    )
+
+    # Add Python DLLs if building with Python bindings (default)
+    if (-not $NoPythonBindings) {
+        $DLLSources += @{ Source = "src\python\$Config\lfs_python_runtime.dll"; Name = "lfs_python_runtime.dll" }
+        $DLLSources += @{ Source = "src\python\$Config\python3.dll"; Name = "python3.dll" }
+    }
+
+    $CopiedCount = 0
+    foreach ($DLL in $DLLSources) {
+        $SourcePath = Join-Path $BuildDir $DLL.Source
+        $DestPath = Join-Path $OutputDir $DLL.Name
+
+        if (Test-Path $SourcePath) {
+            if (-not (Test-Path $DestPath)) {
+                try {
+                    Copy-Item $SourcePath $DestPath -Force -ErrorAction Stop
+                    Write-Host "  Copied: $($DLL.Name)" -ForegroundColor Gray
+                    $CopiedCount++
+                } catch {
+                    Write-Host "  WARNING: Failed to copy $($DLL.Name): $_" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "  Already exists: $($DLL.Name)" -ForegroundColor Gray
+            }
+        } else {
+            Write-Host "  Not found (may be copied by CMake): $($DLL.Name)" -ForegroundColor Gray
+        }
+    }
+
+    if ($CopiedCount -gt 0) {
+        Write-Host "DLL copy completed! ($CopiedCount files)" -ForegroundColor Green
+    } else {
+        Write-Host "No DLLs needed copying (CMake POST_BUILD handles this)" -ForegroundColor Green
+    }
+}
+
+# ============================================================================
 # Build LichtFeld-Studio
 # ============================================================================
 
 function Build-LichtFeldStudio {
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host "Building LichtFeld-Studio ($Configuration)" -ForegroundColor Cyan
+    if (-not $NoPythonBindings) {
+        Write-Host "  with Python Bindings" -ForegroundColor Cyan
+    } else {
+        Write-Host "  WITHOUT Python Bindings" -ForegroundColor Cyan
+    }
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""
 
@@ -533,10 +665,13 @@ function Build-LichtFeldStudio {
         }
 
         # Verify LibTorch exists for the selected configuration
+        $LibTorchDebugPath = Join-Path $ProjectRoot "external\debug\libtorch"
+        $LibTorchReleasePath = Join-Path $ProjectRoot "external\release\libtorch"
+
         $LibTorchPath = if ($Configuration -eq 'Debug') {
-            Join-Path $ProjectRoot "external\debug\libtorch"
+            $LibTorchDebugPath
         } else {
-            Join-Path $ProjectRoot "external\release\libtorch"
+            $LibTorchReleasePath
         }
 
         if (-not (Test-Path $LibTorchPath)) {
@@ -547,6 +682,22 @@ function Build-LichtFeldStudio {
             exit 1
         }
 
+        # Warn if using multi-config generator (Visual Studio) without both configurations
+        if ($Generator -like "Visual Studio*") {
+            if (-not (Test-Path $LibTorchDebugPath)) {
+                Write-Host "WARNING: LibTorch Debug not found (multi-config generator requires both)" -ForegroundColor Yellow
+                Write-Host "Expected: $LibTorchDebugPath" -ForegroundColor Gray
+                Write-Host "Debug builds may fail. Run without -SkipLibTorch to download both." -ForegroundColor Yellow
+                Write-Host ""
+            }
+            if (-not (Test-Path $LibTorchReleasePath)) {
+                Write-Host "WARNING: LibTorch Release not found (multi-config generator requires both)" -ForegroundColor Yellow
+                Write-Host "Expected: $LibTorchReleasePath" -ForegroundColor Gray
+                Write-Host "Release builds may fail. Run without -SkipLibTorch to download both." -ForegroundColor Yellow
+                Write-Host ""
+            }
+        }
+
         # Clean if requested
         if ($Clean -and (Test-Path $BuildDir)) {
             Write-Host "Cleaning build directory..." -ForegroundColor Yellow
@@ -555,11 +706,46 @@ function Build-LichtFeldStudio {
             Write-Host ""
         }
 
-        # Determine generator
-        $Generator = "Ninja"
-        if (-not (Test-Command "ninja")) {
-            Write-Host "Ninja not found. Using Visual Studio generator..." -ForegroundColor Yellow
-            $Generator = "Visual Studio 17 2022"
+        # Always use Visual Studio generator on Windows for better compatibility
+        $Generator = "Visual Studio 17 2022"
+
+        # Verify Visual Studio generator is available (only if cl.exe wasn't found earlier)
+        # If we're in a VS dev environment with working cl.exe, the generator should work
+        if (-not (Test-Command "cl")) {
+            $VSInstallPath = Find-VSInstallPath
+            if (-not $VSInstallPath) {
+                Write-Host "ERROR: Visual Studio 2022 not found!" -ForegroundColor Red
+                Write-Host "The '$Generator' generator requires Visual Studio 2022 to be installed." -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "Please install Visual Studio 2022 with 'Desktop development with C++' workload" -ForegroundColor Yellow
+                Write-Host "Download from: https://visualstudio.microsoft.com/downloads/" -ForegroundColor Cyan
+                exit 1
+            }
+        }
+
+        # Build CMake arguments
+        $CMakeArgs = @(
+            "-B", "build",
+            "-G", $Generator,
+            "-A", "x64",
+            "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchain"
+        )
+
+        if (-not $NoPythonBindings) {
+            $CMakeArgs += "-DBUILD_PYTHON_BINDINGS=ON"
+        } else {
+            $CMakeArgs += "-DBUILD_PYTHON_BINDINGS=OFF"
+        }
+
+        # Add LibTorch path for CMake (required if tests are built)
+        $TorchConfigPath = if ($Configuration -eq 'Debug') {
+            Join-Path $ProjectRoot "external\debug\libtorch\share\cmake\Torch"
+        } else {
+            Join-Path $ProjectRoot "external\release\libtorch\share\cmake\Torch"
+        }
+
+        if (Test-Path $TorchConfigPath) {
+            $CMakeArgs += "-DTorch_DIR=$TorchConfigPath"
         }
 
         # Configure
@@ -567,20 +753,14 @@ function Build-LichtFeldStudio {
         Write-Host "  Generator: $Generator" -ForegroundColor Gray
         Write-Host "  Configuration: $Configuration" -ForegroundColor Gray
         Write-Host "  Toolchain: $VcpkgToolchain" -ForegroundColor Gray
+        if (-not $NoPythonBindings) {
+            Write-Host "  Python Bindings: Enabled" -ForegroundColor Gray
+        } else {
+            Write-Host "  Python Bindings: Disabled" -ForegroundColor Gray
+        }
         Write-Host ""
 
-        if ($Generator -eq "Ninja") {
-            cmake -B build `
-                "-DCMAKE_BUILD_TYPE=$Configuration" `
-                -G "$Generator" `
-                "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchain"
-        } else {
-            # VS generator doesn't use CMAKE_BUILD_TYPE at configure time
-            cmake -B build `
-                -G "$Generator" `
-                -A x64 `
-                "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchain"
-        }
+        & cmake @CMakeArgs
 
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: CMake configuration failed!" -ForegroundColor Red
@@ -596,16 +776,17 @@ function Build-LichtFeldStudio {
         Write-Host "This may take 10-30 minutes depending on your system..." -ForegroundColor Gray
         Write-Host ""
 
-        if ($Generator -eq "Ninja") {
-            cmake --build build -j
-        } else {
-            cmake --build build --config "$Configuration" -j
-        }
+        # Use msbuild for better Windows compatibility
+        $SolutionFile = Join-Path $BuildDir "LichtFeld-Studio.sln"
+        msbuild $SolutionFile /p:Configuration=$Configuration /p:Platform=x64 /m
 
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Build failed!" -ForegroundColor Red
             exit 1
         }
+
+        # Copy required DLLs to output directory
+        Copy-RequiredDLLs -BuildDir $BuildDir -Config $Configuration
 
         Write-Host ""
         Write-Host "================================================================" -ForegroundColor Green
@@ -613,13 +794,14 @@ function Build-LichtFeldStudio {
         Write-Host "================================================================" -ForegroundColor Green
         Write-Host ""
         Write-Host "Executable location:" -ForegroundColor Cyan
-
-        if ($Generator -eq "Ninja") {
-            Write-Host "  $BuildDir\LichtFeld-Studio.exe" -ForegroundColor White
-        } else {
-            Write-Host "  $BuildDir\$Configuration\LichtFeld-Studio.exe" -ForegroundColor White
-        }
+        Write-Host "  $BuildDir\$Configuration\LichtFeld-Studio.exe" -ForegroundColor White
         Write-Host ""
+
+        if (-not $NoPythonBindings) {
+            Write-Host "Python module location:" -ForegroundColor Cyan
+            Write-Host "  $BuildDir\src\python\$Configuration\lichtfeld.pyd" -ForegroundColor White
+            Write-Host ""
+        }
 
     } finally {
         Pop-Location
@@ -637,6 +819,11 @@ Write-Host "================================================================" -F
 Write-Host ""
 Write-Host "Project: $ProjectRoot" -ForegroundColor Gray
 Write-Host "Configuration: $Configuration" -ForegroundColor Gray
+if (-not $NoPythonBindings) {
+    Write-Host "Python Bindings: Enabled" -ForegroundColor Gray
+} else {
+    Write-Host "Python Bindings: Disabled" -ForegroundColor Gray
+}
 Write-Host ""
 
 # Phase 1: Environment Verification
@@ -664,7 +851,10 @@ if (-not $SkipVerification) {
     Write-Host ""
 }
 
-# Phase 2: vcpkg Setup
+# Phase 2: Git Submodules
+Setup-GitSubmodules
+
+# Phase 3: vcpkg Setup
 if (-not $SkipVcpkg) {
     Setup-Vcpkg
 } else {
@@ -679,7 +869,7 @@ if (-not $SkipVcpkg) {
     Write-Host ""
 }
 
-# Phase 3: LibTorch Download
+# Phase 4: LibTorch Download
 if (-not $SkipLibTorch) {
     Setup-LibTorch
 } else {
@@ -687,7 +877,7 @@ if (-not $SkipLibTorch) {
     Write-Host ""
 }
 
-# Phase 4: Build
+# Phase 5: Build
 Build-LichtFeldStudio
 
 Write-Host ""

@@ -13,9 +13,9 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 
-#include "core/sogs.hpp" // for write_sog
 #include "core/splat_data.hpp"
 #include "core/tensor.hpp"
+#include "io/exporter.hpp"
 #include "io/formats/ply.hpp"
 #include "io/formats/sogs.hpp"
 
@@ -331,12 +331,12 @@ TEST_F(SogFormatTest, ExportRoundtrip) {
     fs::path export_path = test_dir / "export_test.sog";
     std::cout << "Exporting to SOG: " << export_path << std::endl;
 
-    lfs::core::SogWriteOptions options{
-        .iterations = 10,
-        .output_path = export_path};
+    lfs::io::SogSaveOptions options{
+        .output_path = export_path,
+        .kmeans_iterations = 10};
 
-    auto write_result = lfs::core::write_sog(*orig_result, options);
-    ASSERT_TRUE(write_result.has_value()) << "Failed to write SOG: " << write_result.error();
+    auto write_result = lfs::io::save_sog(*orig_result, options);
+    ASSERT_TRUE(write_result.has_value()) << "Failed to write SOG: " << write_result.error().format();
     std::cout << "SOG export complete" << std::endl;
 
     // Reimport the SOG

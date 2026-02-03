@@ -10,7 +10,6 @@
 #include "formats/colmap.hpp"
 #include "io/error.hpp"
 #include "io/filesystem_utils.hpp"
-#include "training/dataset.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -158,7 +157,7 @@ namespace lfs::io {
             auto end_time = std::chrono::high_resolution_clock::now();
             return LoadResult{
                 .data = LoadedScene{
-                    .cameras = nullptr,
+                    .cameras = {},
                     .point_cloud = nullptr},
                 .scene_center = Tensor::zeros({3}, Device::CPU),
                 .loader_used = name(),
@@ -209,16 +208,6 @@ namespace lfs::io {
                 }
             }
 
-            // Create dataset configuration
-            lfs::training::DatasetConfig dataset_config;
-            dataset_config.resize_factor = options.resize_factor;
-            dataset_config.max_width = options.max_width;
-            dataset_config.test_every = 8; // Default split behavior
-
-            // Create dataset with ALL images
-            auto dataset = std::make_shared<lfs::training::CameraDataset>(
-                std::move(cameras), dataset_config, lfs::training::CameraDataset::Split::ALL);
-
             if (options.progress) {
                 options.progress(60.0f, "Loading point cloud...");
             }
@@ -248,14 +237,13 @@ namespace lfs::io {
             auto load_time = std::chrono::duration_cast<std::chrono::milliseconds>(
                 end_time - start_time);
 
-            // Get scene center values and dataset size for logging BEFORE moving
             auto scene_center_cpu = scene_center.cpu();
             const float* sc_ptr = scene_center_cpu.ptr<float>();
-            size_t num_cameras = dataset->size();
+            size_t num_cameras = cameras.size();
 
             LoadResult result{
                 .data = LoadedScene{
-                    .cameras = std::move(dataset),
+                    .cameras = std::move(cameras),
                     .point_cloud = std::move(point_cloud)},
                 .scene_center = scene_center,
                 .images_have_alpha = images_have_alpha,

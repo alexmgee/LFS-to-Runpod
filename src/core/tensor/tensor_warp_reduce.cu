@@ -341,6 +341,8 @@ namespace lfs::core::tensor_ops {
         const int lane = threadIdx.x % 32;
         const int warps_per_block = blockDim.x / 32;
 
+        const bool can_vectorize = (segment_size % 4) == 0;
+
         for (size_t seg_idx = blockIdx.x * warps_per_block + warp_id;
              seg_idx < num_segments;
              seg_idx += gridDim.x * warps_per_block) {
@@ -348,27 +350,21 @@ namespace lfs::core::tensor_ops {
 
             float sum = 0.0f;
 
-            // COALESCED vectorized loads: All 32 lanes read consecutive float4s
-            // Iteration 0: lanes read float4[0..31] = floats[0..127]
-            // Iteration 1: lanes read float4[32..63] = floats[128..255]
-            // etc.
-            const size_t num_float4s = segment_size / 4;
-            for (size_t base = 0; base < num_float4s; base += 32) {
-                size_t idx = base + lane;
-                if (idx < num_float4s) {
-                    float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
-                    sum += v.x + v.y + v.z + v.w;
+            if (can_vectorize) {
+                const size_t num_float4s = segment_size / 4;
+                for (size_t base = 0; base < num_float4s; base += 32) {
+                    size_t idx = base + lane;
+                    if (idx < num_float4s) {
+                        float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
+                        sum += v.x + v.y + v.z + v.w;
+                    }
+                }
+            } else {
+                for (size_t i = lane; i < segment_size; i += 32) {
+                    sum += segment_start[i];
                 }
             }
 
-            // Handle remainder (segment_size not divisible by 4)
-            // rem_start = number of floats already processed by vectorized loop
-            size_t rem_start = num_float4s * 4;
-            for (size_t i = rem_start + lane; i < segment_size; i += 32) {
-                sum += segment_start[i];
-            }
-
-            // Warp shuffle reduction
             sum = warp_ops::warp_reduce_sum(sum);
 
             if (lane == 0) {
@@ -389,6 +385,7 @@ namespace lfs::core::tensor_ops {
         const int lane = threadIdx.x % 32;
         const int warps_per_block = blockDim.x / 32;
         const float inv_size = 1.0f / static_cast<float>(segment_size);
+        const bool can_vectorize = (segment_size % 4) == 0;
 
         for (size_t seg_idx = blockIdx.x * warps_per_block + warp_id;
              seg_idx < num_segments;
@@ -396,18 +393,19 @@ namespace lfs::core::tensor_ops {
             const float* segment_start = input + seg_idx * segment_size;
 
             float sum = 0.0f;
-            const size_t num_float4s = segment_size / 4;
-            for (size_t base = 0; base < num_float4s; base += 32) {
-                size_t idx = base + lane;
-                if (idx < num_float4s) {
-                    float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
-                    sum += v.x + v.y + v.z + v.w;
+            if (can_vectorize) {
+                const size_t num_float4s = segment_size / 4;
+                for (size_t base = 0; base < num_float4s; base += 32) {
+                    size_t idx = base + lane;
+                    if (idx < num_float4s) {
+                        float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
+                        sum += v.x + v.y + v.z + v.w;
+                    }
                 }
-            }
-            size_t rem_start = num_float4s * 4;
-            for (size_t i = rem_start + lane; i < segment_size; i += 32) {
-                if (i < segment_size)
+            } else {
+                for (size_t i = lane; i < segment_size; i += 32) {
                     sum += segment_start[i];
+                }
             }
 
             sum = warp_ops::warp_reduce_sum(sum);
@@ -429,6 +427,7 @@ namespace lfs::core::tensor_ops {
         const int warp_id = threadIdx.x / 32;
         const int lane = threadIdx.x % 32;
         const int warps_per_block = blockDim.x / 32;
+        const bool can_vectorize = (segment_size % 4) == 0;
 
         for (size_t seg_idx = blockIdx.x * warps_per_block + warp_id;
              seg_idx < num_segments;
@@ -436,18 +435,19 @@ namespace lfs::core::tensor_ops {
             const float* segment_start = input + seg_idx * segment_size;
 
             float val = -CUDA_INFINITY;
-            const size_t num_float4s = segment_size / 4;
-            for (size_t base = 0; base < num_float4s; base += 32) {
-                size_t idx = base + lane;
-                if (idx < num_float4s) {
-                    float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
-                    val = fmaxf(val, fmaxf(fmaxf(v.x, v.y), fmaxf(v.z, v.w)));
+            if (can_vectorize) {
+                const size_t num_float4s = segment_size / 4;
+                for (size_t base = 0; base < num_float4s; base += 32) {
+                    size_t idx = base + lane;
+                    if (idx < num_float4s) {
+                        float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
+                        val = fmaxf(val, fmaxf(fmaxf(v.x, v.y), fmaxf(v.z, v.w)));
+                    }
                 }
-            }
-            size_t rem_start = num_float4s * 4;
-            for (size_t i = rem_start + lane; i < segment_size; i += 32) {
-                if (i < segment_size)
+            } else {
+                for (size_t i = lane; i < segment_size; i += 32) {
                     val = fmaxf(val, segment_start[i]);
+                }
             }
 
             val = warp_ops::warp_reduce_max(val);
@@ -469,6 +469,7 @@ namespace lfs::core::tensor_ops {
         const int warp_id = threadIdx.x / 32;
         const int lane = threadIdx.x % 32;
         const int warps_per_block = blockDim.x / 32;
+        const bool can_vectorize = (segment_size % 4) == 0;
 
         for (size_t seg_idx = blockIdx.x * warps_per_block + warp_id;
              seg_idx < num_segments;
@@ -476,18 +477,19 @@ namespace lfs::core::tensor_ops {
             const float* segment_start = input + seg_idx * segment_size;
 
             float val = CUDA_INFINITY;
-            const size_t num_float4s = segment_size / 4;
-            for (size_t base = 0; base < num_float4s; base += 32) {
-                size_t idx = base + lane;
-                if (idx < num_float4s) {
-                    float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
-                    val = fminf(val, fminf(fminf(v.x, v.y), fminf(v.z, v.w)));
+            if (can_vectorize) {
+                const size_t num_float4s = segment_size / 4;
+                for (size_t base = 0; base < num_float4s; base += 32) {
+                    size_t idx = base + lane;
+                    if (idx < num_float4s) {
+                        float4 v = reinterpret_cast<const float4*>(segment_start)[idx];
+                        val = fminf(val, fminf(fminf(v.x, v.y), fminf(v.z, v.w)));
+                    }
                 }
-            }
-            size_t rem_start = num_float4s * 4;
-            for (size_t i = rem_start + lane; i < segment_size; i += 32) {
-                if (i < segment_size)
+            } else {
+                for (size_t i = lane; i < segment_size; i += 32) {
                     val = fminf(val, segment_start[i]);
+                }
             }
 
             val = warp_ops::warp_reduce_min(val);

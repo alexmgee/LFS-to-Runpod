@@ -7,6 +7,10 @@
 #include "core/path_utils.hpp"
 #include "gui/gui_manager.hpp"
 #include "io/loader.hpp"
+#include "operator/operator_context.hpp"
+#include "operator/operator_id.hpp"
+#include "operator/operator_registry.hpp"
+#include "python/python_runtime.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene_manager.hpp"
 #include "tools/align_tool.hpp"
@@ -24,6 +28,102 @@
 namespace lfs::vis {
 
     using namespace lfs::core::events;
+
+    namespace {
+        bool dispatchKeyToModals(int key, int scancode, int action, int mods, double x, double y) {
+            op::ModalEvent evt{};
+            evt.type = op::ModalEvent::Type::KEY;
+            evt.data = KeyEvent{key, scancode, action, mods};
+
+            if (op::operators().hasModalOperator()) {
+                const auto result = op::operators().dispatchModalEvent(evt);
+                if (result != op::OperatorResult::PASS_THROUGH) {
+                    return true;
+                }
+            }
+
+            python::ModalEvent py_evt{};
+            py_evt.type = python::ModalEvent::Type::Key;
+            py_evt.key = key;
+            py_evt.action = action;
+            py_evt.mods = mods;
+            py_evt.x = x;
+            py_evt.y = y;
+            py_evt.over_gui = ImGui::GetIO().WantCaptureMouse;
+
+            return python::dispatch_modal_event(py_evt);
+        }
+
+        bool dispatchMouseButtonToModals(int button, int action, int mods, double x, double y) {
+            op::ModalEvent evt{};
+            evt.type = op::ModalEvent::Type::MOUSE_BUTTON;
+            evt.data = MouseButtonEvent{button, action, mods, {x, y}};
+
+            if (op::operators().hasModalOperator()) {
+                const auto result = op::operators().dispatchModalEvent(evt);
+                if (result != op::OperatorResult::PASS_THROUGH) {
+                    return true;
+                }
+            }
+
+            python::ModalEvent py_evt{};
+            py_evt.type = python::ModalEvent::Type::MouseButton;
+            py_evt.button = button;
+            py_evt.action = action;
+            py_evt.mods = mods;
+            py_evt.x = x;
+            py_evt.y = y;
+            py_evt.over_gui = ImGui::GetIO().WantCaptureMouse;
+
+            return python::dispatch_modal_event(py_evt);
+        }
+
+        bool dispatchMouseMoveToModals(double x, double y, double delta_x, double delta_y, [[maybe_unused]] int mods) {
+            op::ModalEvent evt{};
+            evt.type = op::ModalEvent::Type::MOUSE_MOVE;
+            evt.data = MouseMoveEvent{{x, y}, {delta_x, delta_y}};
+
+            if (op::operators().hasModalOperator()) {
+                const auto result = op::operators().dispatchModalEvent(evt);
+                if (result != op::OperatorResult::PASS_THROUGH) {
+                    return true;
+                }
+            }
+
+            python::ModalEvent py_evt{};
+            py_evt.type = python::ModalEvent::Type::MouseMove;
+            py_evt.x = x;
+            py_evt.y = y;
+            py_evt.delta_x = delta_x;
+            py_evt.delta_y = delta_y;
+            py_evt.over_gui = ImGui::GetIO().WantCaptureMouse;
+
+            return python::dispatch_modal_event(py_evt);
+        }
+
+        bool dispatchScrollToModals(double xoff, double yoff, double x, double y, [[maybe_unused]] int mods) {
+            op::ModalEvent evt{};
+            evt.type = op::ModalEvent::Type::MOUSE_SCROLL;
+            evt.data = MouseScrollEvent{xoff, yoff};
+
+            if (op::operators().hasModalOperator()) {
+                const auto result = op::operators().dispatchModalEvent(evt);
+                if (result != op::OperatorResult::PASS_THROUGH) {
+                    return true;
+                }
+            }
+
+            python::ModalEvent py_evt{};
+            py_evt.type = python::ModalEvent::Type::Scroll;
+            py_evt.scroll_x = xoff;
+            py_evt.scroll_y = yoff;
+            py_evt.x = x;
+            py_evt.y = y;
+            py_evt.over_gui = ImGui::GetIO().WantCaptureMouse;
+
+            return python::dispatch_modal_event(py_evt);
+        }
+    } // namespace
 
     InputController* InputController::instance_ = nullptr;
 
@@ -222,6 +322,11 @@ namespace lfs::vis {
             return;
         }
 
+        // Dispatch to modal operators first - if consumed, don't continue
+        if (dispatchMouseButtonToModals(button, action, getModifierKeys(), x, y)) {
+            return;
+        }
+
         // Check for splitter drag FIRST
         if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
             // Check for double-click on camera frustum
@@ -246,10 +351,10 @@ namespace lfs::vis {
                     last_clicked_camera_id_ = -1;
                     return;
                 }
-                // First click on a camera - record it
                 last_click_time_ = now;
                 last_click_pos_ = {x, y};
                 last_clicked_camera_id_ = hovered_camera_id_;
+                selectCameraByUid(hovered_camera_id_);
             } else {
                 last_click_time_ = std::chrono::steady_clock::time_point();
                 last_click_pos_ = {-1000, -1000};
@@ -394,18 +499,44 @@ namespace lfs::vis {
             case input::Action::SELECTION_REPLACE:
             case input::Action::SELECTION_ADD:
             case input::Action::SELECTION_REMOVE:
-                // Skip selection if clicking on viewport gizmo or ImGuizmo
                 if (!over_gui && !over_gizmo && tool_context_ &&
                     !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
                     if (selection_tool_ && selection_tool_->isEnabled()) {
-                        if (selection_tool_->handleMouseButton(button, action, mods, x, y, *tool_context_)) {
-                            drag_mode_ = DragMode::Brush;
-                            drag_button_ = button;
+                        // Invoke selection stroke operator
+                        auto* gm = services().guiOrNull();
+                        const auto sub_mode = gm ? static_cast<int>(gm->getSelectionSubMode()) : 0;
+                        const int selection_op = (bound_action == input::Action::SELECTION_ADD)      ? 1
+                                                 : (bound_action == input::Action::SELECTION_REMOVE) ? 2
+                                                                                                     : 0;
+
+                        op::OperatorProperties props;
+                        props.set("x", x);
+                        props.set("y", y);
+                        props.set("mode", sub_mode);
+                        props.set("op", selection_op);
+                        props.set("brush_radius", selection_tool_->getBrushRadius());
+                        props.set("use_depth_filter", selection_tool_->isCropFilterEnabled());
+
+                        const auto result = op::operators().invoke(op::BuiltinOp::SelectionStroke, &props);
+                        if (result.status == op::OperatorResult::RUNNING_MODAL) {
+                            // Operator is now modal, don't set drag mode - modal dispatch handles it
                         }
                     } else if (brush_tool_ && brush_tool_->isEnabled()) {
-                        if (brush_tool_->handleMouseButton(button, action, mods, x, y, *tool_context_)) {
-                            drag_mode_ = DragMode::Brush;
-                            drag_button_ = button;
+                        // Only invoke brush operator for add/remove actions (not replace)
+                        if (bound_action == input::Action::SELECTION_ADD ||
+                            bound_action == input::Action::SELECTION_REMOVE) {
+                            const int brush_mode = static_cast<int>(brush_tool_->getMode());
+                            const int brush_action = (bound_action == input::Action::SELECTION_REMOVE) ? 1 : 0;
+
+                            op::OperatorProperties props;
+                            props.set("x", x);
+                            props.set("y", y);
+                            props.set("mode", brush_mode);
+                            props.set("action", brush_action);
+                            props.set("brush_radius", brush_tool_->getBrushRadius());
+                            props.set("saturation_amount", brush_tool_->getSaturationAmount());
+
+                            op::operators().invoke(op::BuiltinOp::BrushStroke, &props);
                         }
                     }
                 }
@@ -413,8 +544,12 @@ namespace lfs::vis {
 
             case input::Action::NONE:
             default:
-                if (align_tool_ && align_tool_->isEnabled() && tool_context_) {
-                    if (!over_gui && align_tool_->handleMouseButton(button, action, x, y, *tool_context_)) {
+                if (align_tool_ && align_tool_->isEnabled() && tool_context_ && !over_gui) {
+                    op::OperatorProperties props;
+                    props.set("x", x);
+                    props.set("y", y);
+                    const auto result = op::operators().invoke(op::BuiltinOp::AlignPickPoint, &props);
+                    if (result.status != op::OperatorResult::CANCELLED) {
                         return;
                     }
                 }
@@ -449,12 +584,7 @@ namespace lfs::vis {
                 drag_button_ = -1;
                 was_dragging = true;
             } else if (drag_mode_ == DragMode::Brush) {
-                // Release for selection/brush tools
-                if (selection_tool_ && selection_tool_->isEnabled() && tool_context_) {
-                    selection_tool_->handleMouseButton(button, action, mods, x, y, *tool_context_);
-                } else if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
-                    brush_tool_->handleMouseButton(button, action, mods, x, y, *tool_context_);
-                }
+                // Selection and brush tools now use operator system (modal dispatch handles release)
                 drag_mode_ = DragMode::None;
                 drag_button_ = -1;
             }
@@ -513,6 +643,14 @@ namespace lfs::vis {
     void InputController::handleMouseMove(double x, double y) {
         // Track if we moved significantly
         glm::dvec2 current_pos{x, y};
+        const double delta_x = x - last_mouse_pos_.x;
+        const double delta_y = y - last_mouse_pos_.y;
+
+        // Dispatch to modal operators first - if consumed, don't continue
+        if (dispatchMouseMoveToModals(x, y, delta_x, delta_y, getModifierKeys())) {
+            last_mouse_pos_ = current_pos;
+            return;
+        }
 
         if (drag_mode_ == DragMode::Splitter && services().renderingOrNull()) {
             const auto viewport_size = glm::ivec2(static_cast<int>(viewport_bounds_.width),
@@ -607,31 +745,6 @@ namespace lfs::vis {
             current_cursor_ = CursorType::Default;
         }
 
-        if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
-            if (drag_mode_ == DragMode::Brush) {
-                brush_tool_->handleMouseMove(x, y, *tool_context_);
-                last_mouse_pos_ = {x, y};
-                return;
-            } else if (brush_tool_->handleMouseMove(x, y, *tool_context_)) {
-                last_mouse_pos_ = {x, y};
-                return;
-            }
-        }
-
-        // Skip selection if viewport gizmo or ImGuizmo is being dragged
-        const bool gizmo_dragging = services().guiOrNull() && services().guiOrNull()->isViewportGizmoDragging();
-        if (selection_tool_ && selection_tool_->isEnabled() && tool_context_ && !gizmo_dragging &&
-            !ImGuizmo::IsUsing()) {
-            if (drag_mode_ == DragMode::Brush) {
-                selection_tool_->handleMouseMove(x, y, *tool_context_);
-                last_mouse_pos_ = {x, y};
-                return;
-            } else if (selection_tool_->handleMouseMove(x, y, *tool_context_)) {
-                last_mouse_pos_ = {x, y};
-                return;
-            }
-        }
-
         glm::vec2 pos(x, y);
         last_mouse_pos_ = current_pos;
 
@@ -678,28 +791,35 @@ namespace lfs::vis {
     }
 
     void InputController::handleScroll([[maybe_unused]] double xoff, double yoff) {
-        if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
-            if (brush_tool_->handleScroll(xoff, yoff, getModifierKeys(), *tool_context_)) {
+        double mouse_x, mouse_y;
+        glfwGetCursorPos(window_, &mouse_x, &mouse_y);
+
+        // Dispatch to modal operators first - if consumed, don't continue
+        if (dispatchScrollToModals(xoff, yoff, mouse_x, mouse_y, getModifierKeys())) {
+            return;
+        }
+
+        // Brush radius adjustment for selection/brush tools
+        const int mods = getModifierKeys();
+        const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
+        const bool shift = (mods & GLFW_MOD_SHIFT) != 0;
+        if ((ctrl || shift) && !op::operators().hasModalOperator()) {
+            if (selection_tool_ && selection_tool_->isEnabled()) {
+                const float scale = (yoff > 0) ? 1.1f : 0.9f;
+                selection_tool_->setBrushRadius(selection_tool_->getBrushRadius() * scale);
+                return;
+            }
+            if (brush_tool_ && brush_tool_->isEnabled()) {
+                const float scale = (yoff > 0) ? 1.1f : 0.9f;
+                brush_tool_->setBrushRadius(brush_tool_->getBrushRadius() * scale);
                 return;
             }
         }
 
-        if (selection_tool_ && selection_tool_->isEnabled() && tool_context_) {
-            if (selection_tool_->handleScroll(xoff, yoff, getModifierKeys(), *tool_context_)) {
-                return;
-            }
-        }
-
-        if (drag_mode_ == DragMode::Gizmo || drag_mode_ == DragMode::Splitter) {
+        if (drag_mode_ == DragMode::Gizmo || drag_mode_ == DragMode::Splitter)
             return;
-        }
 
-        // Block scroll when hovering over GUI windows (panels)
-        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
-            return;
-        }
-
-        if (!shouldCameraHandleInput())
+        if (!isInViewport(mouse_x, mouse_y) || ImGui::IsAnyItemActive() || ImGui::GetIO().WantCaptureMouse)
             return;
 
         const float delta = static_cast<float>(yoff);
@@ -743,210 +863,259 @@ namespace lfs::vis {
             key_r_pressed_ = (action != GLFW_RELEASE);
         }
 
+        if (lfs::python::has_keyboard_capture_request()) {
+            return;
+        }
+
+        // Dispatch to modal operators first - if consumed, don't continue
+        double mx, my;
+        glfwGetCursorPos(window_, &mx, &my);
+        if (dispatchKeyToModals(key, 0, action, mods, mx, my)) {
+            return;
+        }
+
         // Forward to GUI for key capture (rebinding)
         if (action == GLFW_PRESS && services().guiOrNull() && services().guiOrNull()->isCapturingInput()) {
             services().guiOrNull()->captureKey(key, mods);
             return;
         }
 
-        // Selection tool handles Enter/Escape before global bindings consume them
-        if (action == GLFW_PRESS && !ImGui::IsAnyItemActive() &&
-            selection_tool_ && selection_tool_->isEnabled() && tool_context_ &&
-            selection_tool_->handleKeyPress(key, mods, *tool_context_)) {
+        const bool wants_text_input = ImGui::GetIO().WantTextInput;
+        const bool imgui_wants_keyboard =
+            ImGui::IsAnyItemActive() || wants_text_input || ImGui::GetIO().WantCaptureKeyboard;
+
+        if (action != GLFW_PRESS && action != GLFW_REPEAT)
             return;
+
+        const auto tool_mode = getCurrentToolMode();
+        const auto bound_action = bindings_.getActionForKey(tool_mode, key, mods);
+
+        // Camera navigation bypasses ImGui keyboard capture (except text input)
+        if (action == GLFW_PRESS && !wants_text_input) {
+            if (bound_action == input::Action::CAMERA_NEXT_VIEW ||
+                bound_action == input::Action::CAMERA_PREV_VIEW) {
+                const auto* trainer = services().trainerOrNull();
+                if (trainer) {
+                    const int num_cams = static_cast<int>(trainer->getCamList().size());
+                    if (num_cams > 0) {
+                        const int delta = (bound_action == input::Action::CAMERA_NEXT_VIEW) ? 1 : -1;
+                        last_camview_ = (last_camview_ < 0)
+                                            ? (delta > 0 ? 0 : num_cams - 1)
+                                            : (last_camview_ + delta + num_cams) % num_cams;
+                        cmd::GoToCamView{.cam_id = last_camview_}.emit();
+                    }
+                }
+                return;
+            }
         }
 
-        // Handle key press/repeat actions through bindings
-        if ((action == GLFW_PRESS || action == GLFW_REPEAT) && !ImGui::IsAnyItemActive()) {
-            const auto tool_mode = getCurrentToolMode();
-            const auto bound_action = bindings_.getActionForKey(tool_mode, key, mods);
+        if (imgui_wants_keyboard)
+            return;
 
-            // Only speed controls support key repeat
-            if (action == GLFW_REPEAT) {
-                if (bound_action != input::Action::CAMERA_SPEED_UP &&
-                    bound_action != input::Action::CAMERA_SPEED_DOWN &&
-                    bound_action != input::Action::ZOOM_SPEED_UP &&
-                    bound_action != input::Action::ZOOM_SPEED_DOWN) {
-                    return;
+        // Only speed controls support key repeat
+        if (action == GLFW_REPEAT) {
+            if (bound_action != input::Action::CAMERA_SPEED_UP &&
+                bound_action != input::Action::CAMERA_SPEED_DOWN &&
+                bound_action != input::Action::ZOOM_SPEED_UP &&
+                bound_action != input::Action::ZOOM_SPEED_DOWN) {
+                return;
+            }
+        }
+
+        if (bound_action != input::Action::NONE) {
+            switch (bound_action) {
+            case input::Action::TOGGLE_SPLIT_VIEW:
+                cmd::ToggleSplitView{}.emit();
+                return;
+
+            case input::Action::TOGGLE_GT_COMPARISON:
+                cmd::ToggleGTComparison{}.emit();
+                return;
+
+            case input::Action::CAMERA_RESET_HOME:
+                viewport_.camera.resetToHome();
+                publishCameraMove();
+                return;
+
+            case input::Action::CAMERA_FOCUS_SELECTION:
+                handleFocusSelection();
+                return;
+
+            case input::Action::CYCLE_PLY:
+                cmd::CyclePLY{}.emit();
+                return;
+
+            case input::Action::CYCLE_SELECTION_VIS:
+                if (services().guiOrNull() &&
+                    services().guiOrNull()->getCurrentToolMode() == ToolType::Selection) {
+                    cmd::CycleSelectionVisualization{}.emit();
                 }
+                return;
+
+            case input::Action::DELETE_SELECTED:
+                cmd::DeleteSelected{}.emit();
+                return;
+
+            case input::Action::DELETE_NODE:
+                // Delete selected PLY node(s)
+                if (tool_context_) {
+                    if (auto* sm = tool_context_->getSceneManager()) {
+                        const auto selected = sm->getSelectedNodeNames();
+                        for (const auto& name : selected) {
+                            cmd::RemovePLY{.name = name, .keep_children = false}.emit();
+                        }
+                    }
+                }
+                return;
+
+            case input::Action::UNDO:
+                cmd::Undo{}.emit();
+                return;
+
+            case input::Action::REDO:
+                cmd::Redo{}.emit();
+                return;
+
+            case input::Action::INVERT_SELECTION:
+                cmd::InvertSelection{}.emit();
+                return;
+
+            case input::Action::DESELECT_ALL:
+                cmd::DeselectAll{}.emit();
+                return;
+
+            case input::Action::SELECT_ALL:
+                cmd::SelectAll{}.emit();
+                return;
+
+            case input::Action::COPY_SELECTION:
+                cmd::CopySelection{}.emit();
+                return;
+
+            case input::Action::PASTE_SELECTION:
+                cmd::PasteSelection{}.emit();
+                return;
+
+            case input::Action::APPLY_CROP_BOX: {
+                // Check if ellipsoid is selected, otherwise apply cropbox
+                if (tool_context_) {
+                    if (auto* sm = tool_context_->getSceneManager()) {
+                        const auto ellipsoid_id = sm->getSelectedNodeEllipsoidId();
+                        if (ellipsoid_id != NULL_NODE) {
+                            cmd::ApplyEllipsoid{}.emit();
+                            return;
+                        }
+                    }
+                }
+                cmd::ApplyCropBox{}.emit();
+                return;
             }
 
-            if (bound_action != input::Action::NONE) {
-                switch (bound_action) {
-                case input::Action::TOGGLE_SPLIT_VIEW:
-                    cmd::ToggleSplitView{}.emit();
-                    return;
-
-                case input::Action::TOGGLE_GT_COMPARISON:
-                    cmd::ToggleGTComparison{}.emit();
-                    return;
-
-                case input::Action::CAMERA_RESET_HOME:
-                    viewport_.camera.resetToHome();
-                    publishCameraMove();
-                    return;
-
-                case input::Action::CAMERA_FOCUS_SELECTION:
-                    handleFocusSelection();
-                    return;
-
-                case input::Action::CYCLE_PLY:
-                    cmd::CyclePLY{}.emit();
-                    return;
-
-                case input::Action::CYCLE_SELECTION_VIS:
-                    if (services().guiOrNull() &&
-                        services().guiOrNull()->getCurrentToolMode() == gui::panels::ToolType::Selection) {
-                        cmd::CycleSelectionVisualization{}.emit();
-                    }
-                    return;
-
-                case input::Action::DELETE_SELECTED:
-                    cmd::DeleteSelected{}.emit();
-                    return;
-
-                case input::Action::DELETE_NODE:
-                    // Delete selected PLY node(s)
-                    if (tool_context_) {
-                        if (auto* sm = tool_context_->getSceneManager()) {
-                            const auto selected = sm->getSelectedNodeNames();
-                            for (const auto& name : selected) {
-                                cmd::RemovePLY{.name = name, .keep_children = false}.emit();
-                            }
-                        }
-                    }
-                    return;
-
-                case input::Action::UNDO:
-                    cmd::Undo{}.emit();
-                    return;
-
-                case input::Action::REDO:
-                    cmd::Redo{}.emit();
-                    return;
-
-                case input::Action::INVERT_SELECTION:
-                    cmd::InvertSelection{}.emit();
-                    return;
-
-                case input::Action::DESELECT_ALL:
-                    cmd::DeselectAll{}.emit();
-                    return;
-
-                case input::Action::SELECT_ALL:
-                    cmd::SelectAll{}.emit();
-                    return;
-
-                case input::Action::COPY_SELECTION:
-                    cmd::CopySelection{}.emit();
-                    return;
-
-                case input::Action::PASTE_SELECTION:
-                    cmd::PasteSelection{}.emit();
-                    return;
-
-                case input::Action::APPLY_CROP_BOX: {
-                    // Check if ellipsoid is selected, otherwise apply cropbox
-                    if (tool_context_) {
-                        if (auto* sm = tool_context_->getSceneManager()) {
-                            const auto ellipsoid_id = sm->getSelectedNodeEllipsoidId();
-                            if (ellipsoid_id != NULL_NODE) {
-                                cmd::ApplyEllipsoid{}.emit();
-                                return;
-                            }
-                        }
-                    }
-                    cmd::ApplyCropBox{}.emit();
-                    return;
+            case input::Action::CYCLE_BRUSH_MODE:
+                if (brush_tool_ && brush_tool_->isEnabled()) {
+                    const auto current = brush_tool_->getMode();
+                    brush_tool_->setMode(current == tools::BrushMode::Select
+                                             ? tools::BrushMode::Saturation
+                                             : tools::BrushMode::Select);
                 }
+                return;
 
-                case input::Action::CYCLE_BRUSH_MODE:
-                    if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
-                        brush_tool_->handleKeyPress(key, mods, *tool_context_);
-                    }
-                    return;
+            case input::Action::CAMERA_SPEED_UP:
+                updateCameraSpeed(true);
+                return;
 
-                case input::Action::CAMERA_NEXT_VIEW:
-                    if (ImGui::GetIO().WantTextInput)
-                        return;
-                    if (services().trainerOrNull()) {
-                        const int num_cams = static_cast<int>(services().trainerOrNull()->getCamList().size());
-                        if (num_cams > 0) {
-                            last_camview_ = (last_camview_ < 0) ? 0 : (last_camview_ + 1) % num_cams;
-                            cmd::GoToCamView{.cam_id = last_camview_}.emit();
-                        }
-                    }
-                    return;
+            case input::Action::CAMERA_SPEED_DOWN:
+                updateCameraSpeed(false);
+                return;
 
-                case input::Action::CAMERA_PREV_VIEW:
-                    if (ImGui::GetIO().WantTextInput)
-                        return;
-                    if (services().trainerOrNull()) {
-                        const int num_cams = static_cast<int>(services().trainerOrNull()->getCamList().size());
-                        if (num_cams > 0) {
-                            last_camview_ = (last_camview_ < 0) ? num_cams - 1 : (last_camview_ - 1 + num_cams) % num_cams;
-                            cmd::GoToCamView{.cam_id = last_camview_}.emit();
-                        }
-                    }
-                    return;
+            case input::Action::ZOOM_SPEED_UP:
+                updateZoomSpeed(true);
+                return;
 
-                case input::Action::CAMERA_SPEED_UP:
-                    updateCameraSpeed(true);
-                    return;
+            case input::Action::ZOOM_SPEED_DOWN:
+                updateZoomSpeed(false);
+                return;
 
-                case input::Action::CAMERA_SPEED_DOWN:
-                    updateCameraSpeed(false);
-                    return;
-
-                case input::Action::ZOOM_SPEED_UP:
-                    updateZoomSpeed(true);
-                    return;
-
-                case input::Action::ZOOM_SPEED_DOWN:
-                    updateZoomSpeed(false);
-                    return;
-
-                case input::Action::SELECT_MODE_CENTERS:
-                    if (services().guiOrNull()) {
-                        services().guiOrNull()->setSelectionSubMode(gui::panels::SelectionSubMode::Centers);
-                    }
-                    return;
-
-                case input::Action::SELECT_MODE_RECTANGLE:
-                    if (services().guiOrNull()) {
-                        services().guiOrNull()->setSelectionSubMode(gui::panels::SelectionSubMode::Rectangle);
-                    }
-                    return;
-
-                case input::Action::SELECT_MODE_POLYGON:
-                    if (services().guiOrNull()) {
-                        services().guiOrNull()->setSelectionSubMode(gui::panels::SelectionSubMode::Polygon);
-                    }
-                    return;
-
-                case input::Action::SELECT_MODE_LASSO:
-                    if (services().guiOrNull()) {
-                        services().guiOrNull()->setSelectionSubMode(gui::panels::SelectionSubMode::Lasso);
-                    }
-                    return;
-
-                case input::Action::SELECT_MODE_RINGS:
-                    if (services().guiOrNull()) {
-                        services().guiOrNull()->setSelectionSubMode(gui::panels::SelectionSubMode::Rings);
-                    }
-                    return;
-
-                case input::Action::TOGGLE_UI:
-                    ui::ToggleUI{}.emit();
-                    return;
-
-                case input::Action::TOGGLE_FULLSCREEN:
-                    ui::ToggleFullscreen{}.emit();
-                    return;
-
-                default:
-                    break;
+            case input::Action::SELECT_MODE_CENTERS:
+                if (services().guiOrNull()) {
+                    services().guiOrNull()->setSelectionSubMode(SelectionSubMode::Centers);
                 }
+                return;
+
+            case input::Action::SELECT_MODE_RECTANGLE:
+                if (services().guiOrNull()) {
+                    services().guiOrNull()->setSelectionSubMode(SelectionSubMode::Rectangle);
+                }
+                return;
+
+            case input::Action::SELECT_MODE_POLYGON:
+                if (services().guiOrNull()) {
+                    services().guiOrNull()->setSelectionSubMode(SelectionSubMode::Polygon);
+                }
+                return;
+
+            case input::Action::SELECT_MODE_LASSO:
+                if (services().guiOrNull()) {
+                    services().guiOrNull()->setSelectionSubMode(SelectionSubMode::Lasso);
+                }
+                return;
+
+            case input::Action::SELECT_MODE_RINGS:
+                if (services().guiOrNull()) {
+                    services().guiOrNull()->setSelectionSubMode(SelectionSubMode::Rings);
+                }
+                return;
+
+            case input::Action::TOGGLE_UI:
+                ui::ToggleUI{}.emit();
+                return;
+
+            case input::Action::TOGGLE_FULLSCREEN:
+                ui::ToggleFullscreen{}.emit();
+                return;
+
+            case input::Action::SEQUENCER_ADD_KEYFRAME:
+                cmd::SequencerAddKeyframe{}.emit();
+                return;
+
+            case input::Action::SEQUENCER_UPDATE_KEYFRAME:
+                cmd::SequencerUpdateKeyframe{}.emit();
+                return;
+
+            case input::Action::SEQUENCER_PLAY_PAUSE:
+                cmd::SequencerPlayPause{}.emit();
+                return;
+
+            case input::Action::TOOL_SELECT:
+                lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Selection)}.emit();
+                return;
+
+            case input::Action::TOOL_TRANSLATE:
+                lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Translate)}.emit();
+                return;
+
+            case input::Action::TOOL_ROTATE:
+                lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Rotate)}.emit();
+                return;
+
+            case input::Action::TOOL_SCALE:
+                lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Scale)}.emit();
+                return;
+
+            case input::Action::TOOL_MIRROR:
+                lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Mirror)}.emit();
+                return;
+
+            case input::Action::TOOL_BRUSH:
+                lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Brush)}.emit();
+                return;
+
+            case input::Action::TOOL_ALIGN:
+                lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Align)}.emit();
+                return;
+
+            default:
+                break;
             }
         }
 
@@ -1083,6 +1252,20 @@ namespace lfs::vis {
                 }
             } else if (ext == ".ply" || ext == ".sog" || ext == ".spz") {
                 splat_files.push_back(filepath);
+            } else if (ext == ".bin" || ext == ".txt") {
+                // Check if this is a COLMAP file (cameras.bin, images.bin, etc.)
+                auto filename = filepath.filename().string();
+                std::transform(filename.begin(), filename.end(), filename.begin(), ::tolower);
+                if (filename == "cameras.bin" || filename == "cameras.txt" ||
+                    filename == "images.bin" || filename == "images.txt") {
+                    auto parent = filepath.parent_path();
+                    if (lfs::io::Loader::isColmapSparsePath(parent)) {
+                        cmd::ImportColmapCameras{.sparse_path = parent}.emit();
+                        LOG_INFO("Importing COLMAP cameras from: {}", lfs::core::path_to_utf8(parent));
+                        return;
+                    }
+                }
+                unrecognized_files.push_back(lfs::core::path_to_utf8(filepath));
             } else if (std::filesystem::is_directory(filepath)) {
                 // Check for dataset markers
                 LOG_DEBUG("Checking directory for dataset markers: {}", lfs::core::path_to_utf8(filepath));
@@ -1090,6 +1273,11 @@ namespace lfs::vis {
                     if (!dataset_path) {
                         dataset_path = filepath;
                     }
+                } else if (lfs::io::Loader::isColmapSparsePath(filepath)) {
+                    // COLMAP sparse folder - cameras only (no images required)
+                    cmd::ImportColmapCameras{.sparse_path = filepath}.emit();
+                    LOG_INFO("Importing COLMAP cameras from: {}", lfs::core::path_to_utf8(filepath));
+                    return;
                 } else {
                     // Check if it's a SOG directory (WebP-based format)
                     if (std::filesystem::exists(filepath / "meta.json") &&
@@ -1239,6 +1427,20 @@ namespace lfs::vis {
         last_camview_ = event.cam_id;
     }
 
+    void InputController::selectCameraByUid(const int uid) {
+        if (!tool_context_)
+            return;
+        auto* const sm = tool_context_->getSceneManager();
+        if (!sm)
+            return;
+        for (const auto* node : sm->getScene().getNodes()) {
+            if (node->type == NodeType::CAMERA && node->camera_uid == uid) {
+                sm->selectNode(node->name);
+                return;
+            }
+        }
+    }
+
     void InputController::handleFocusSelection() {
         if (!tool_context_)
             return;
@@ -1303,6 +1505,11 @@ namespace lfs::vis {
     bool InputController::shouldCameraHandleInput() const {
         // Don't handle if gizmo or splitter is active
         if (drag_mode_ == DragMode::Gizmo || drag_mode_ == DragMode::Splitter) {
+            return false;
+        }
+
+        // Block when ImGui wants keyboard input (text fields, etc.)
+        if (ImGui::GetIO().WantTextInput || ImGui::GetIO().WantCaptureKeyboard) {
             return false;
         }
 
@@ -1466,11 +1673,11 @@ namespace lfs::vis {
         // Check GUI tool mode for transform tools
         if (services().guiOrNull()) {
             const auto gui_tool = services().guiOrNull()->getCurrentToolMode();
-            if (gui_tool == gui::panels::ToolType::Translate)
+            if (gui_tool == ToolType::Translate)
                 return input::ToolMode::TRANSLATE;
-            if (gui_tool == gui::panels::ToolType::Rotate)
+            if (gui_tool == ToolType::Rotate)
                 return input::ToolMode::ROTATE;
-            if (gui_tool == gui::panels::ToolType::Scale)
+            if (gui_tool == ToolType::Scale)
                 return input::ToolMode::SCALE;
         }
         return input::ToolMode::GLOBAL;

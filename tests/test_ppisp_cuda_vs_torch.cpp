@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include <gtest/gtest.h>
+#include <random>
 #include <torch/torch.h>
 
 #include "lfs/kernels/ppisp.cuh"

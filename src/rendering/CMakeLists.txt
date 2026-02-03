@@ -82,7 +82,7 @@ target_compile_definitions(lfs_rendering PRIVATE
         $<$<PLATFORM_ID:Windows>:NOMINMAX>
 )
 
-# Export only the public header
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/rendering/rendering.hpp
-        DESTINATION include/rendering
-)
+if(NOT BUILD_PORTABLE)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/rendering/rendering.hpp
+            DESTINATION include/rendering)
+endif()

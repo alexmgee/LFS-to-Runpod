@@ -15,6 +15,12 @@
 
 namespace lfs::training {
 
+    using lfs::core::CHECKPOINT_MAGIC;
+    using lfs::core::CHECKPOINT_VERSION;
+    using lfs::core::CheckpointFlags;
+    using lfs::core::CheckpointHeader;
+    using lfs::core::has_flag;
+
     std::expected<void, std::string> save_checkpoint(
         const std::filesystem::path& path,
         const int iteration,
@@ -189,31 +195,6 @@ namespace lfs::training {
         }
     }
 
-    std::expected<CheckpointHeader, std::string> load_checkpoint_header(
-        const std::filesystem::path& path) {
-
-        try {
-            std::ifstream file;
-            if (!lfs::core::open_file_for_read(path, std::ios::binary, file)) {
-                return std::unexpected("Failed to open: " + lfs::core::path_to_utf8(path));
-            }
-
-            CheckpointHeader header{};
-            file.read(reinterpret_cast<char*>(&header), sizeof(header));
-
-            if (header.magic != CHECKPOINT_MAGIC) {
-                return std::unexpected("Invalid checkpoint: wrong magic");
-            }
-            if (header.version > CHECKPOINT_VERSION) {
-                return std::unexpected("Unsupported version: " + std::to_string(header.version));
-            }
-            return header;
-
-        } catch (const std::exception& e) {
-            return std::unexpected(std::string("Read header failed: ") + e.what());
-        }
-    }
-
     std::expected<int, std::string> load_checkpoint(
         const std::filesystem::path& path,
         IStrategy& strategy,
@@ -353,85 +334,6 @@ namespace lfs::training {
 
         } catch (const std::exception& e) {
             return std::unexpected(std::string("Load checkpoint failed: ") + e.what());
-        }
-    }
-
-    std::expected<lfs::core::SplatData, std::string> load_checkpoint_splat_data(
-        const std::filesystem::path& path) {
-
-        try {
-            std::ifstream file;
-            if (!lfs::core::open_file_for_read(path, std::ios::binary, file)) {
-                return std::unexpected("Failed to open: " + lfs::core::path_to_utf8(path));
-            }
-
-            CheckpointHeader header{};
-            file.read(reinterpret_cast<char*>(&header), sizeof(header));
-
-            if (header.magic != CHECKPOINT_MAGIC) {
-                return std::unexpected("Invalid checkpoint: wrong magic");
-            }
-            if (header.version > CHECKPOINT_VERSION) {
-                return std::unexpected("Unsupported version: " + std::to_string(header.version));
-            }
-
-            // Skip strategy type
-            uint32_t type_len = 0;
-            file.read(reinterpret_cast<char*>(&type_len), sizeof(type_len));
-            file.seekg(type_len, std::ios::cur);
-
-            lfs::core::SplatData splat;
-            splat.deserialize(file);
-
-            LOG_DEBUG("SplatData loaded: {} Gaussians, iter {}", header.num_gaussians, header.iteration);
-            return splat;
-
-        } catch (const std::exception& e) {
-            return std::unexpected(std::string("Load SplatData failed: ") + e.what());
-        }
-    }
-
-    std::expected<lfs::core::param::TrainingParameters, std::string> load_checkpoint_params(
-        const std::filesystem::path& path) {
-
-        try {
-            std::ifstream file;
-            if (!lfs::core::open_file_for_read(path, std::ios::binary, file)) {
-                return std::unexpected("Failed to open: " + lfs::core::path_to_utf8(path));
-            }
-
-            CheckpointHeader header{};
-            file.read(reinterpret_cast<char*>(&header), sizeof(header));
-
-            if (header.magic != CHECKPOINT_MAGIC) {
-                return std::unexpected("Invalid checkpoint: wrong magic");
-            }
-            if (header.version > CHECKPOINT_VERSION) {
-                return std::unexpected("Unsupported version: " + std::to_string(header.version));
-            }
-
-            lfs::core::param::TrainingParameters params;
-            if (header.params_json_size > 0) {
-                file.seekg(static_cast<std::streamoff>(header.params_json_offset));
-                std::string params_str(header.params_json_size, '\0');
-                file.read(params_str.data(), static_cast<std::streamsize>(header.params_json_size));
-
-                const auto params_json = nlohmann::json::parse(params_str);
-                if (params_json.contains("optimization")) {
-                    params.optimization = lfs::core::param::OptimizationParameters::from_json(params_json["optimization"]);
-                    if (params_json.contains("dataset")) {
-                        params.dataset = lfs::core::param::DatasetConfig::from_json(params_json["dataset"]);
-                    }
-                } else {
-                    params.optimization = lfs::core::param::OptimizationParameters::from_json(params_json);
-                }
-            }
-
-            LOG_DEBUG("Params loaded from checkpoint: {}", lfs::core::path_to_utf8(params.dataset.data_path));
-            return params;
-
-        } catch (const std::exception& e) {
-            return std::unexpected(std::string("Load params failed: ") + e.what());
         }
     }
 

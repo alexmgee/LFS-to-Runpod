@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include "core/tensor.hpp"
 #include "io/cache_image_loader.hpp"
 
@@ -78,7 +79,7 @@ namespace lfs::io {
         cudaStream_t stream = nullptr;
     };
 
-    class PipelinedImageLoader {
+    class LFS_IO_API PipelinedImageLoader {
     public:
         struct CacheStats {
             size_t jpeg_cache_entries = 0;

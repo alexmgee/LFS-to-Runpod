@@ -1,0 +1,12 @@
+[plugin]
+name = "gaussian_analyzer"
+version = "1.0.0"
+description = "Analyze and visualize gaussian splat properties"
+author = "LichtFeld Examples"
+
+[dependencies]
+packages = []
+
+[lifecycle]
+auto_start = true
+hot_reload = true

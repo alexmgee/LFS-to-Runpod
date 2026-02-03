@@ -188,6 +188,30 @@ namespace lfs::vis {
         ImGui::PopStyleColor(6);
     }
 
+    void Theme::pushModalStyle() const {
+        constexpr float MODAL_BG_ALPHA = 0.98f;
+        constexpr float MODAL_BORDER_SIZE = 2.0f;
+        constexpr float TITLE_DARKEN = 0.1f;
+        constexpr float TITLE_ACTIVE_DARKEN = 0.05f;
+
+        const ImVec4 popup_bg{palette.surface.x, palette.surface.y, palette.surface.z, MODAL_BG_ALPHA};
+        const ImVec4 title_bg = darken(palette.surface, isLightTheme() ? 0.0f : TITLE_DARKEN);
+        const ImVec4 title_bg_active = darken(palette.surface, isLightTheme() ? 0.0f : TITLE_ACTIVE_DARKEN);
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, popup_bg);
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, title_bg);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, title_bg_active);
+        ImGui::PushStyleColor(ImGuiCol_Border, palette.primary);
+        ImGui::PushStyleColor(ImGuiCol_Text, palette.text);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, MODAL_BORDER_SIZE);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sizes.popup_rounding);
+    }
+
+    void Theme::popModalStyle() {
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(5);
+    }
+
     // Global access
     const Theme& theme() {
         ensureInitialized();

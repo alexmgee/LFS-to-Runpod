@@ -8,12 +8,13 @@
 #include "components/ppisp_controller_pool.hpp"
 #include "components/ppisp_file.hpp"
 #include "components/sparsity_optimizer.hpp"
+#include "control/command_api.hpp"
+#include "control/control_boundary.hpp"
 #include "core/cuda/memory_arena.hpp"
 #include "core/events.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
-#include "core/splat_data_export.hpp"
 #include "core/splat_data_transform.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
 #include "io/cache_image_loader.hpp"
@@ -22,12 +23,18 @@
 #include "lfs/kernels/ssim.cuh"
 #include "losses/losses.hpp"
 #include "optimizer/adam_optimizer.hpp"
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+#include "python/runner.hpp"
+#endif
 #include "rasterization/fast_rasterizer.hpp"
 #include "rasterization/gsplat_rasterizer.hpp"
 #include "strategies/adc.hpp"
 #include "strategies/mcmc.hpp"
+#include "strategies/strategy_factory.hpp"
 #include "training/kernels/grad_alpha.hpp"
 #include "visualizer/scene/scene.hpp"
+
+#include <filesystem>
 
 #include <atomic>
 #include <cmath>
@@ -427,12 +434,11 @@ namespace lfs::training {
 
         cudaStreamCreateWithFlags(&callback_stream_, cudaStreamNonBlocking);
 
-        // Datasets will be created in initialize() from Scene cameras
-        if (!scene.getTrainCameras()) {
-            throw std::runtime_error("Scene has no train cameras");
+        if (!scene.hasTrainingData()) {
+            throw std::runtime_error("Scene has no cameras");
         }
 
-        LOG_DEBUG("Trainer constructed from Scene with {} cameras", scene.getTrainCameras()->get_cameras().size());
+        LOG_DEBUG("Trainer constructed from Scene with {} cameras", scene.getAllCameras().size());
     }
 
     std::expected<void, std::string> Trainer::initialize(const lfs::core::param::TrainingParameters& params) {
@@ -457,17 +463,14 @@ namespace lfs::training {
             dataset_config.max_width = params.dataset.max_width;
             dataset_config.test_every = params.dataset.test_every;
 
-            // Get source cameras - from Scene (new mode) or base_dataset_ (legacy mode)
+            // Get source cameras from Scene nodes or base_dataset_
             std::vector<std::shared_ptr<lfs::core::Camera>> source_cameras;
             if (scene_) {
-                // Scene mode: get cameras from Scene
-                auto scene_dataset = scene_->getTrainCameras();
-                if (!scene_dataset) {
-                    return std::unexpected("Scene has no train cameras");
+                source_cameras = scene_->getAllCameras();
+                if (source_cameras.empty()) {
+                    return std::unexpected("Scene has no cameras");
                 }
-                source_cameras = scene_dataset->get_cameras();
             } else if (base_dataset_) {
-                // Legacy mode: use base_dataset_
                 source_cameras = base_dataset_->get_cameras();
             } else {
                 return std::unexpected("No camera source available");
@@ -505,13 +508,12 @@ namespace lfs::training {
                     return std::unexpected("Scene has no training model set");
                 }
 
-                if (params.optimization.strategy == "mcmc") {
-                    strategy_ = std::make_unique<MCMC>(*model);
-                    LOG_DEBUG("Created MCMC strategy from Scene model");
-                } else {
-                    strategy_ = std::make_unique<ADC>(*model);
-                    LOG_DEBUG("Created ADC strategy from Scene model");
+                auto result = StrategyFactory::instance().create(params.optimization.strategy, *model);
+                if (!result) {
+                    return std::unexpected(result.error());
                 }
+                strategy_ = std::move(*result);
+                LOG_DEBUG("Created {} strategy from Scene model", params.optimization.strategy);
             }
 
             auto& splat = strategy_->get_model();
@@ -695,6 +697,41 @@ namespace lfs::training {
                 LOG_INFO("Starting from iteration: {}", current_iteration_.load());
             }
 
+            // Expose initial snapshot for Python control (iteration 0)
+            {
+                lfs::training::HookContext ctx{
+                    .iteration = current_iteration_.load(),
+                    .loss = current_loss_.load(),
+                    .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                    .is_refining = strategy_ ? strategy_->is_refining(current_iteration_.load()) : false,
+                    .trainer = this};
+                lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::SafeControl);
+                lfs::training::CommandCenter::instance().update_snapshot(
+                    ctx, params_.optimization.iterations, is_paused_.load(), is_running_.load(), stop_requested_.load(),
+                    lfs::training::TrainingPhase::SafeControl);
+            }
+
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+            // Default Python control script if none provided
+            if (python_scripts_.empty()) {
+                std::filesystem::path default_script = std::filesystem::path(PROJECT_ROOT_PATH) / "src/python/sample/command_demo.py";
+                if (std::filesystem::exists(default_script)) {
+                    set_python_scripts({default_script});
+                    LOG_INFO("No Python scripts specified; using default: {}", default_script.string());
+                } else {
+                    LOG_WARN("Default Python script not found: {}", default_script.string());
+                }
+            }
+
+            // Execute configured Python scripts to register iteration callbacks
+            if (!python_scripts_.empty()) {
+                auto py_result = lfs::python::run_scripts(python_scripts_);
+                if (!py_result) {
+                    return std::unexpected(std::format("Failed to run Python scripts: {}", py_result.error()));
+                }
+            }
+#endif
+
             initialized_ = true;
             LOG_INFO("Trainer initialization complete");
             return {};
@@ -738,7 +775,7 @@ namespace lfs::training {
 
         // Release GPU memory pools back to system
         lfs::core::CudaMemoryPool::instance().trim_cached_memory();
-        lfs::core::GlobalArenaManager::instance().get_arena().emergency_cleanup();
+        lfs::core::GlobalArenaManager::instance().get_arena().full_reset();
         cudaDeviceSynchronize();
         LOG_DEBUG("GPU memory released");
 
@@ -1001,6 +1038,26 @@ namespace lfs::training {
 
             // Check control requests at the beginning
             handle_control_requests(iter, stop_token);
+
+            // Python hook: iteration start (safe, pre-forward)
+            {
+                lfs::training::HookContext ctx{
+                    .iteration = iter,
+                    .loss = current_loss_.load(),
+                    .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                    .is_refining = strategy_ ? strategy_->is_refining(iter) : false,
+                    .trainer = this};
+                lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::IterationStart);
+                lfs::training::CommandCenter::instance().update_snapshot(
+                    ctx, params_.optimization.iterations, is_paused_.load(), is_running_.load(), stop_requested_.load(),
+                    lfs::training::TrainingPhase::IterationStart);
+                lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::IterationStart, ctx);
+                auto view = lfs::training::CommandCenter::instance().snapshot();
+                lfs::training::CommandCenter::instance().drain_enqueued(view);
+            }
+
+            // Training step entering forward/backward/optimizer region (commands blocked)
+            lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::Forward);
 
             // If stop requested, return Stop
             if (stop_requested_.load() || stop_token.stop_requested()) {
@@ -1438,6 +1495,21 @@ namespace lfs::training {
                 {
                     std::unique_lock<std::shared_mutex> lock(render_mutex_);
 
+                    // Python hook: pre-optimizer-step (post-backward, pre-step)
+                    {
+                        lfs::training::HookContext ctx{
+                            .iteration = iter,
+                            .loss = current_loss_.load(),
+                            .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                            .is_refining = strategy_ ? strategy_->is_refining(iter) : false,
+                            .trainer = this};
+                        lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::OptimizerStep);
+                        lfs::training::CommandCenter::instance().update_snapshot(
+                            ctx, params_.optimization.iterations, is_paused_.load(), is_running_.load(), stop_requested_.load(),
+                            lfs::training::TrainingPhase::OptimizerStep);
+                        lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::PreOptimizerStep, ctx);
+                    }
+
                     // Skip post_backward during sparsification phase
                     const bool in_sparsification = params_.optimization.enable_sparsity &&
                                                    iter > (params_.optimization.iterations - params_.optimization.sparsify_steps);
@@ -1520,6 +1592,21 @@ namespace lfs::training {
                 }
             }
 
+            // Python hook: post-step (after optimizer and side-effects)
+            {
+                lfs::training::HookContext ctx{
+                    .iteration = iter,
+                    .loss = current_loss_.load(),
+                    .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                    .is_refining = strategy_ ? strategy_->is_refining(iter) : false,
+                    .trainer = this};
+                lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::SafeControl);
+                lfs::training::CommandCenter::instance().update_snapshot(
+                    ctx, params_.optimization.iterations, is_paused_.load(), is_running_.load(), stop_requested_.load(),
+                    lfs::training::TrainingPhase::SafeControl);
+                lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::PostStep, ctx);
+            }
+
             // Return Continue if we should continue training
             if (iter < params_.optimization.iterations && !stop_requested_.load() && !stop_token.stop_requested()) {
                 return StepResult::Continue;
@@ -1540,6 +1627,7 @@ namespace lfs::training {
         is_running_ = false;
         training_complete_ = false;
         ready_to_start_ = false; // Reset the flag
+        lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::SafeControl);
 
         ready_to_start_ = true; // Skip GUI wait for now
 
@@ -1556,6 +1644,21 @@ namespace lfs::training {
                                          params_.dataset.loading_params.min_cpu_free_memory_ratio,
                                          params_.dataset.loading_params.print_cache_status,
                                          params_.dataset.loading_params.print_status_freq_num);
+
+        // Notify Python control layer that training is starting
+        {
+            lfs::training::HookContext ctx{
+                .iteration = 0,
+                .loss = current_loss_.load(),
+                .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                .is_refining = strategy_ ? strategy_->is_refining(0) : false,
+                .trainer = this};
+            lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::SafeControl);
+            lfs::training::CommandCenter::instance().update_snapshot(
+                ctx, params_.optimization.iterations, is_paused_.load(), is_running_.load(), stop_requested_.load(),
+                lfs::training::TrainingPhase::SafeControl);
+            lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::TrainingStart, ctx);
+        }
 
         try {
             // Start from current_iteration_ (allows resume from checkpoint)
@@ -1634,43 +1737,16 @@ namespace lfs::training {
                 if (!step_result) {
                     // Check if this is an OOM_RETRY signal
                     if (step_result.error() == "OOM_RETRY") {
-                        // Aggressive memory cleanup before retry
-                        LOG_INFO("Performing aggressive memory cleanup before retry...");
-
-                        // 0. CRITICAL: Synchronize and clear any pending CUDA errors
-                        cudaError_t sync_err = cudaDeviceSynchronize();
-                        if (sync_err != cudaSuccess) {
-                            LOG_WARN("cudaDeviceSynchronize before cleanup returned: {}", cudaGetErrorString(sync_err));
-                            // Clear the error so we can continue
-                            cudaGetLastError();
-                        }
-
-                        // 1. Emergency cleanup of arena (resets offsets, clears inactive frames)
-                        lfs::core::GlobalArenaManager::instance().get_arena().emergency_cleanup();
-
-                        // 2. Trim cached memory pool
-                        lfs::core::CudaMemoryPool::instance().trim_cached_memory();
-
-                        // 3. Synchronize again after cleanup
                         cudaDeviceSynchronize();
-
-                        // 4. Clear any error state from the OOM
                         cudaGetLastError();
 
-                        // 5. Log memory status
-                        size_t free_mem = 0, total_mem = 0;
-                        cudaError_t err = cudaMemGetInfo(&free_mem, &total_mem);
-                        if (err == cudaSuccess) {
-                            LOG_INFO("CUDA memory after aggressive cleanup: {:.2f} GB free / {:.2f} GB total",
-                                     free_mem / (1024.0 * 1024.0 * 1024.0),
-                                     total_mem / (1024.0 * 1024.0 * 1024.0));
-                        } else {
-                            LOG_WARN("cudaMemGetInfo failed: {}", cudaGetErrorString(err));
-                            cudaGetLastError(); // Clear this error too
-                        }
+                        lfs::core::GlobalArenaManager::instance().get_arena().full_reset();
+                        lfs::core::CudaMemoryPool::instance().trim_cached_memory();
 
-                        // Retry the same step with upgraded tile mode
-                        LOG_INFO("Retrying iteration {} with upgraded tile mode", iter);
+                        cudaDeviceSynchronize();
+                        cudaGetLastError();
+
+                        LOG_INFO("OOM recovery: retrying iteration {}", iter);
                         step_result = train_step(iter, cam, gt_image, render_mode, stop_token);
                         if (!step_result) {
                             // If retry also failed, propagate the error
@@ -1681,6 +1757,10 @@ namespace lfs::training {
                         return std::unexpected(step_result.error());
                     }
                 }
+
+                // Transition to safe control phase and execute deferred Python callbacks
+                lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::SafeControl);
+                lfs::training::ControlBoundary::instance().drain_callbacks();
 
                 if (*step_result == StepResult::Stop) {
                     break;
@@ -1733,12 +1813,30 @@ namespace lfs::training {
             cache_loader.clear_cpu_cache();
             lfs::core::image_io::wait_for_pending_saves();
 
+            // Notify training end
+            {
+                lfs::training::HookContext ctx{
+                    .iteration = current_iteration_.load(),
+                    .loss = current_loss_.load(),
+                    .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                    .is_refining = strategy_ ? strategy_->is_refining(current_iteration_.load()) : false,
+                    .trainer = this};
+                lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::SafeControl);
+                lfs::training::CommandCenter::instance().update_snapshot(
+                    ctx, params_.optimization.iterations, is_paused_.load(), is_running_.load(), stop_requested_.load(),
+                    lfs::training::TrainingPhase::SafeControl);
+                lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::TrainingEnd, ctx);
+            }
+
+            lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::Idle);
+
             LOG_INFO("Training completed successfully");
             return {};
         } catch (const std::exception& e) {
             is_running_ = false;
             cache_loader.clear_cpu_cache();
             lfs::core::image_io::wait_for_pending_saves();
+            lfs::training::CommandCenter::instance().set_phase(lfs::training::TrainingPhase::Idle);
 
             return std::unexpected(std::format("Training failed: {}", e.what()));
         }

@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "core/observable.hpp"
+#include "core/animatable_property.hpp"
 #include "core/splat_data.hpp"
 #include "core/tensor.hpp"
 #include "training/components/ppisp.hpp"
@@ -17,13 +17,14 @@
 #include <utility>
 #include <vector>
 
-// Forward declarations for training data
+// Forward declarations
 namespace lfs::training {
     class CameraDataset;
 } // namespace lfs::training
 namespace lfs::core {
     struct PointCloud;
     class Camera;
+    enum class CameraModelType : int;
 } // namespace lfs::core
 
 namespace lfs::vis {
@@ -103,9 +104,9 @@ namespace lfs::vis {
         size_t gaussian_count = 0; // For SPLAT: num gaussians, for POINTCLOUD: num points
         glm::vec3 centroid{0.0f};
 
-        // Camera data (for CAMERA nodes)
-        int camera_index = -1; // Index into CameraDataset
-        int camera_uid = -1;   // Camera unique identifier (for GoToCamView)
+        // Camera data (for CAMERA nodes) - node owns the Camera object directly
+        std::shared_ptr<lfs::core::Camera> camera;
+        int camera_uid = -1; // Camera unique identifier (for GoToCamView)
 
         // Image data (for IMAGE and CAMERA nodes) - just the filename, not loaded
         std::string image_path; // Path to image file
@@ -117,10 +118,10 @@ namespace lfs::vis {
         mutable glm::mat4 world_transform{1.0f};
         mutable bool transform_dirty = true;
 
-        // Observable properties - changes auto-invalidate scene cache
-        lfs::core::Observable<glm::mat4> local_transform{glm::mat4{1.0f}, nullptr};
-        lfs::core::Observable<bool> visible{true, nullptr};
-        lfs::core::Observable<bool> locked{false, nullptr};
+        // Animatable properties - changes auto-invalidate scene cache and generate undo
+        lfs::core::prop::AnimatableProperty<glm::mat4> local_transform{glm::mat4{1.0f}};
+        lfs::core::prop::AnimatableProperty<bool> visible{true};
+        lfs::core::prop::AnimatableProperty<bool> locked{false};
 
         // Legacy accessor
         [[nodiscard]] const glm::mat4& transform() const { return local_transform.get(); }
@@ -164,8 +165,7 @@ namespace lfs::vis {
         NodeId addEllipsoid(const std::string& name, NodeId parent_id); // Child of splat node
         NodeId addDataset(const std::string& name);                     // Root node for training dataset
         NodeId addCameraGroup(const std::string& name, NodeId parent, size_t camera_count);
-        NodeId addCamera(const std::string& name, NodeId parent, int camera_index, int camera_uid,
-                         const std::string& image_path = "", const std::string& mask_path = "");
+        NodeId addCamera(const std::string& name, NodeId parent, std::shared_ptr<lfs::core::Camera> camera);
         void reparent(NodeId node, NodeId new_parent);
         // Duplicate a node (and all children recursively for groups)
         // Returns new node name (original name with "_copy" or "_copy_N" suffix)
@@ -289,22 +289,15 @@ namespace lfs::vis {
         void resetSelectionState(); // Full reset: clear mask, remove all groups, create default
 
         // ========== Training Data Storage ==========
-        // Scene owns training data (cameras + initial point cloud)
-        // This allows unified handling in both headless and GUI modes
-
-        void setTrainCameras(std::shared_ptr<lfs::training::CameraDataset> dataset);
-        void setValCameras(std::shared_ptr<lfs::training::CameraDataset> dataset);
         void setInitialPointCloud(std::shared_ptr<lfs::core::PointCloud> point_cloud);
         void setSceneCenter(lfs::core::Tensor scene_center);
         void setImagesHaveAlpha(bool have_alpha) { images_have_alpha_ = have_alpha; }
 
-        [[nodiscard]] std::shared_ptr<lfs::training::CameraDataset> getTrainCameras() const { return train_cameras_; }
-        [[nodiscard]] std::shared_ptr<lfs::training::CameraDataset> getValCameras() const { return val_cameras_; }
         [[nodiscard]] std::shared_ptr<lfs::core::PointCloud> getInitialPointCloud() const { return initial_point_cloud_; }
         [[nodiscard]] const lfs::core::Tensor& getSceneCenter() const { return scene_center_; }
         [[nodiscard]] bool imagesHaveAlpha() const { return images_have_alpha_; }
 
-        [[nodiscard]] bool hasTrainingData() const { return train_cameras_ != nullptr; }
+        [[nodiscard]] bool hasTrainingData() const;
 
         // ========== Appearance Model (PPISP) ==========
         // For standalone viewing of trained models with appearance correction
@@ -324,9 +317,9 @@ namespace lfs::vis {
         [[nodiscard]] bool hasAppearanceController() const { return appearance_controller_pool_ != nullptr; }
         [[nodiscard]] bool hasAppearanceModel() const { return appearance_ppisp_ != nullptr; }
 
-        // Camera access helpers (delegates to CameraDataset)
+        // Camera access (iterates CAMERA nodes)
         [[nodiscard]] std::shared_ptr<const lfs::core::Camera> getCameraByUid(int uid) const;
-        [[nodiscard]] std::vector<std::shared_ptr<const lfs::core::Camera>> getAllCameras() const;
+        [[nodiscard]] std::vector<std::shared_ptr<lfs::core::Camera>> getAllCameras() const;
 
         // Get the primary training model node (for Trainer to operate on)
         // Returns nullptr if no training model exists
@@ -351,9 +344,9 @@ namespace lfs::vis {
         // Get visible nodes for split view
         std::vector<const Node*> getVisibleNodes() const;
 
-        // Get visible camera indices (for frustum rendering)
-        // Returns set of camera_index values for CAMERA nodes that are visible
-        [[nodiscard]] std::unordered_set<int> getVisibleCameraIndices() const;
+        // Get visible cameras (for frustum rendering)
+        // Returns Camera objects from visible CAMERA nodes
+        [[nodiscard]] std::vector<std::shared_ptr<const lfs::core::Camera>> getVisibleCameras() const;
 
         // Mark scene data as changed (e.g., after modifying a node's deleted mask)
         // Also called by SceneNode Observable properties when they change
@@ -407,8 +400,6 @@ namespace lfs::vis {
         const SelectionGroup* findGroup(uint8_t id) const;
 
         // Training data storage
-        std::shared_ptr<lfs::training::CameraDataset> train_cameras_;
-        std::shared_ptr<lfs::training::CameraDataset> val_cameras_;
         std::shared_ptr<lfs::core::PointCloud> initial_point_cloud_;
         lfs::core::Tensor scene_center_;
         bool images_have_alpha_ = false;

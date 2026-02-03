@@ -4,12 +4,14 @@
 
 #pragma once
 
-#include "gui/panels/gizmo_toolbar.hpp"
+#include "core/editor_context.hpp"
 #include "scene/scene.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <string>
 #include <vector>
+#include <imgui.h>
+#include <ImGuizmo.h>
 
 namespace lfs::vis::gui {
 
@@ -55,7 +57,7 @@ namespace lfs::vis::gui {
 
         // Settings at drag start
         bool use_world_space = false;
-        panels::PivotMode pivot_mode = panels::PivotMode::Origin;
+        PivotMode pivot_mode = PivotMode::Origin;
 
         bool isActive() const { return !target_names.empty(); }
         void reset();
@@ -77,7 +79,7 @@ namespace lfs::vis::gui {
         glm::vec3 computeLocalPivot(
             const Scene& scene,
             NodeId target_id,
-            panels::PivotMode mode,
+            PivotMode mode,
             GizmoTargetType type);
 
         // Compute gizmo display matrix for ImGuizmo
@@ -94,8 +96,8 @@ namespace lfs::vis::gui {
             const std::string& name,
             const glm::vec3& pivot_world,
             const glm::vec3& pivot_local,
-            panels::TransformSpace space,
-            panels::PivotMode pivot_mode,
+            TransformSpace space,
+            PivotMode pivot_mode,
             ImGuizmo::OPERATION operation);
 
         GizmoTransformContext captureEllipsoid(
@@ -103,8 +105,8 @@ namespace lfs::vis::gui {
             const std::string& name,
             const glm::vec3& pivot_world,
             const glm::vec3& pivot_local,
-            panels::TransformSpace space,
-            panels::PivotMode pivot_mode,
+            TransformSpace space,
+            PivotMode pivot_mode,
             ImGuizmo::OPERATION operation);
 
         // Apply cumulative transforms - updates scene nodes

@@ -202,6 +202,10 @@ namespace lfs::vis {
         void pushContextMenuStyle() const;
         static void popContextMenuStyle();
 
+        // Modal dialog helpers (pushes 5 colors, 2 style vars)
+        void pushModalStyle() const;
+        static void popModalStyle();
+
         [[nodiscard]] bool isLightTheme() const {
             constexpr float BRIGHTNESS_THRESHOLD = 0.5f;
             const float brightness = (palette.background.x + palette.background.y + palette.background.z) / 3.0f;

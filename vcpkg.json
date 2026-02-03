@@ -3,6 +3,17 @@
   "dependencies": [
     "args",
     "boost-preprocessor",
+    "boost-regex",
+    {
+      "name": "ffmpeg",
+      "features": [
+        "avcodec",
+        "avformat",
+        "swscale",
+        "nvcodec",
+        "x264"
+      ]
+    },
     "freetype",
     "glad",
     "glfw3",
@@ -27,6 +38,13 @@
       ]
     },
     "spdlog",
-    "tbb"
+    "tbb",
+    {
+      "name": "python3",
+      "features": [
+        "extensions"
+      ]
+    },
+    "nanobind"
   ]
 }

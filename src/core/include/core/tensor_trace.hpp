@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "core/export.hpp"
+
 #include "core/logger.hpp"
 #include "core/tensor.hpp"
 #include <chrono>
@@ -14,7 +16,7 @@
 
 namespace lfs::core::debug {
 
-    class TensorOpTracer {
+    class LFS_CORE_API TensorOpTracer {
     public:
         struct OpRecord {
             std::string op_name;
@@ -27,10 +29,7 @@ namespace lfs::core::debug {
             int depth = 0;
         };
 
-        static TensorOpTracer& instance() {
-            static TensorOpTracer inst;
-            return inst;
-        }
+        static TensorOpTracer& instance();
 
         void set_enabled(const bool enabled) { enabled_ = enabled; }
         [[nodiscard]] bool is_enabled() const { return enabled_; }

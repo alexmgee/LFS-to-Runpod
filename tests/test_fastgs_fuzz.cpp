@@ -31,7 +31,7 @@ namespace {
     }
 
     void cleanup_arena() {
-        GlobalArenaManager::instance().get_arena().emergency_cleanup();
+        GlobalArenaManager::instance().get_arena().full_reset();
     }
 
     bool has_nan(const Tensor& t) {

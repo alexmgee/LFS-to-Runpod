@@ -450,7 +450,8 @@
     "gaussian_rings": "Anillos Gaussianos",
     "center_markers": "Marcadores Centrales",
     "perspective": "Perspectiva (O)",
-    "orthographic": "Ortográfica (O)"
+    "orthographic": "Ortográfica (O)",
+    "sequencer": "Secuenciador"
   },
 
   "transform": {
@@ -605,6 +606,7 @@
     "loss": "Pérdida:",
     "gaussians_count": "%s Gaussianos",
     "exporting": "Exportando %s...",
+    "exporting_video": "Exportando vídeo...",
     "importing": "Importando %s...",
     "import_complete": "Importación completada: %zu imágenes, %zu puntos",
     "import_failed": "Importación fallida: %s",
@@ -712,6 +714,9 @@
   },
 
   "image_preview": {
+    "image_section": "IMAGEN",
+    "file_section": "ARCHIVO",
+    "view_section": "VISTA",
     "view": "Ver",
     "navigate": "Navegar",
     "fit_to_window": "Ajustar a Ventana",

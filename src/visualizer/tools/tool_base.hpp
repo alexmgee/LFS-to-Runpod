@@ -26,10 +26,6 @@ namespace lfs::vis::gui {
     struct UIContext;
 }
 
-namespace lfs::vis::command {
-    class CommandHistory;
-}
-
 namespace lfs::vis {
 
     // Forward declarations
@@ -43,26 +39,24 @@ namespace lfs::vis {
     // C++23 concept defining what a tool must provide
     template <typename T>
     concept Tool = requires(T t, const ToolContext& ctx, const lfs::vis::gui::UIContext& ui_ctx, bool* p_open) {
-        { t.getName() } -> std::convertible_to<std::string_view>;
-        { t.getDescription() } -> std::convertible_to<std::string_view>;
-        { t.isEnabled() } -> std::convertible_to<bool>;
-        { t.setEnabled(bool{}) } -> std::same_as<void>;
-        { t.initialize(ctx) } -> std::same_as<bool>;
-        { t.shutdown() } -> std::same_as<void>;
-        { t.update(ctx) } -> std::same_as<void>;
-        { t.renderUI(ui_ctx, p_open) } -> std::same_as<void>;
-    };
+                       { t.getName() } -> std::convertible_to<std::string_view>;
+                       { t.getDescription() } -> std::convertible_to<std::string_view>;
+                       { t.isEnabled() } -> std::convertible_to<bool>;
+                       { t.setEnabled(bool{}) } -> std::same_as<void>;
+                       { t.initialize(ctx) } -> std::same_as<bool>;
+                       { t.shutdown() } -> std::same_as<void>;
+                       { t.update(ctx) } -> std::same_as<void>;
+                       { t.renderUI(ui_ctx, p_open) } -> std::same_as<void>;
+                   };
 
     // Concrete context passed to tools for accessing visualizer resources
     class ToolContext {
     public:
-        ToolContext(RenderingManager* rm, SceneManager* sm, const Viewport* vp, GLFWwindow* win,
-                    command::CommandHistory* ch = nullptr)
+        ToolContext(RenderingManager* rm, SceneManager* sm, const Viewport* vp, GLFWwindow* win)
             : rendering_manager(rm),
               scene_manager(sm),
               viewport(vp),
-              window(win),
-              command_history(ch) {}
+              window(win) {}
 
         // Direct access to components
         RenderingManager* getRenderingManager() const { return rendering_manager; }
@@ -70,7 +64,6 @@ namespace lfs::vis {
         const Viewport& getViewport() const { return *viewport; }
         GLFWwindow* getWindow() const { return window; }
         const ViewportBounds& getViewportBounds() const { return viewport_bounds_; }
-        command::CommandHistory* getCommandHistory() const { return command_history; }
 
         // Update viewport bounds (called by GUI manager)
         void updateViewportBounds(float x, float y, float w, float h) {
@@ -92,7 +85,6 @@ namespace lfs::vis {
         const Viewport* viewport;
         GLFWwindow* window;
         ViewportBounds viewport_bounds_;
-        command::CommandHistory* command_history;
     };
 
     // Base class providing default implementations

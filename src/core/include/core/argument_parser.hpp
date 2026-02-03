@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "core/export.hpp"
+
 #include "core/parameters.hpp"
 #include <expected>
 #include <memory>
@@ -19,14 +21,25 @@ namespace lfs::core::args {
         param::ConvertParameters params;
     };
     struct HelpMode {};
+    struct VersionMode {};
     struct WarmupMode {}; // JIT compile PTX kernels and exit
+    struct McpMode {
+        std::optional<std::filesystem::path> scene_path;
+    };
+    struct PluginMode {
+        enum class Command { CREATE,
+                             CHECK,
+                             LIST };
+        Command command;
+        std::string name;
+    };
 
-    using ParsedArgs = std::variant<TrainingMode, ConvertMode, HelpMode, WarmupMode>;
+    using ParsedArgs = std::variant<TrainingMode, ConvertMode, HelpMode, VersionMode, WarmupMode, McpMode, PluginMode>;
 
-    std::expected<ParsedArgs, std::string> parse_args(int argc, const char* const argv[]);
+    LFS_CORE_API std::expected<ParsedArgs, std::string> parse_args(int argc, const char* const argv[]);
 
     // Legacy interface - prefer parse_args()
-    std::expected<std::unique_ptr<param::TrainingParameters>, std::string>
+    LFS_CORE_API std::expected<std::unique_ptr<param::TrainingParameters>, std::string>
     parse_args_and_params(int argc, const char* const argv[]);
 
 } // namespace lfs::core::args

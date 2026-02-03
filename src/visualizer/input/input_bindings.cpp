@@ -375,8 +375,6 @@ namespace lfs::vis::input {
             {KeyTrigger{GLFW_KEY_S, MODIFIER_NONE, true}, Action::CAMERA_MOVE_BACKWARD, "Backward"},
             {KeyTrigger{GLFW_KEY_A, MODIFIER_NONE, true}, Action::CAMERA_MOVE_LEFT, "Left"},
             {KeyTrigger{GLFW_KEY_D, MODIFIER_NONE, true}, Action::CAMERA_MOVE_RIGHT, "Right"},
-            {KeyTrigger{GLFW_KEY_Q, MODIFIER_NONE, true}, Action::CAMERA_MOVE_DOWN, "Down"},
-            {KeyTrigger{GLFW_KEY_E, MODIFIER_NONE, true}, Action::CAMERA_MOVE_UP, "Up"},
             {KeyTrigger{GLFW_KEY_H, MODIFIER_NONE}, Action::CAMERA_RESET_HOME, "Home"},
             {KeyTrigger{GLFW_KEY_F, MODIFIER_NONE}, Action::CAMERA_FOCUS_SELECTION, "Focus selection"},
             {KeyTrigger{GLFW_KEY_RIGHT, MODIFIER_NONE, true}, Action::CAMERA_NEXT_VIEW, "Next view"},
@@ -422,6 +420,10 @@ namespace lfs::vis::input {
             // UI
             {KeyTrigger{GLFW_KEY_F12, MODIFIER_NONE}, Action::TOGGLE_UI, "Hide UI"},
             {KeyTrigger{GLFW_KEY_F11, MODIFIER_NONE}, Action::TOGGLE_FULLSCREEN, "Fullscreen"},
+            // Sequencer
+            {KeyTrigger{GLFW_KEY_K, MODIFIER_NONE}, Action::SEQUENCER_ADD_KEYFRAME, "Add keyframe"},
+            {KeyTrigger{GLFW_KEY_U, MODIFIER_NONE}, Action::SEQUENCER_UPDATE_KEYFRAME, "Update keyframe"},
+            {KeyTrigger{GLFW_KEY_SPACE, MODIFIER_NONE}, Action::SEQUENCER_PLAY_PAUSE, "Play/Pause"},
         };
 
         constexpr ToolMode ALL_MODES[] = {
@@ -474,6 +476,15 @@ namespace lfs::vis::input {
         for (const auto mode : DELETE_GAUSSIANS_MODES) {
             profile.bindings.push_back({mode, KeyTrigger{GLFW_KEY_DELETE, MODIFIER_NONE}, Action::DELETE_SELECTED, "Delete Gaussians"});
         }
+
+        // Tool shortcuts (GLOBAL mode only, number keys 1-7)
+        profile.bindings.push_back({ToolMode::GLOBAL, KeyTrigger{GLFW_KEY_1}, Action::TOOL_SELECT, "Select"});
+        profile.bindings.push_back({ToolMode::GLOBAL, KeyTrigger{GLFW_KEY_2}, Action::TOOL_TRANSLATE, "Translate"});
+        profile.bindings.push_back({ToolMode::GLOBAL, KeyTrigger{GLFW_KEY_3}, Action::TOOL_ROTATE, "Rotate"});
+        profile.bindings.push_back({ToolMode::GLOBAL, KeyTrigger{GLFW_KEY_4}, Action::TOOL_SCALE, "Scale"});
+        profile.bindings.push_back({ToolMode::GLOBAL, KeyTrigger{GLFW_KEY_5}, Action::TOOL_MIRROR, "Mirror"});
+        profile.bindings.push_back({ToolMode::GLOBAL, KeyTrigger{GLFW_KEY_6}, Action::TOOL_BRUSH, "Brush"});
+        profile.bindings.push_back({ToolMode::GLOBAL, KeyTrigger{GLFW_KEY_7}, Action::TOOL_ALIGN, "Align"});
 
         return profile;
     }
@@ -533,6 +544,16 @@ namespace lfs::vis::input {
         case Action::NODE_RECT_SELECT: return "Rectangle Select Nodes";
         case Action::TOGGLE_UI: return "Toggle UI";
         case Action::TOGGLE_FULLSCREEN: return "Toggle Fullscreen";
+        case Action::SEQUENCER_ADD_KEYFRAME: return "Add Keyframe";
+        case Action::SEQUENCER_UPDATE_KEYFRAME: return "Update Keyframe";
+        case Action::SEQUENCER_PLAY_PAUSE: return "Play/Pause";
+        case Action::TOOL_SELECT: return "Select Tool";
+        case Action::TOOL_TRANSLATE: return "Translate Tool";
+        case Action::TOOL_ROTATE: return "Rotate Tool";
+        case Action::TOOL_SCALE: return "Scale Tool";
+        case Action::TOOL_MIRROR: return "Mirror Tool";
+        case Action::TOOL_BRUSH: return "Brush Tool";
+        case Action::TOOL_ALIGN: return "Align Tool";
         default: return "Unknown";
         }
     }
@@ -659,6 +680,96 @@ namespace lfs::vis::input {
             if (!result.empty())
                 result += "+";
             result += "Super";
+        }
+        return result;
+    }
+
+    void InputBindings::startCapture(ToolMode mode, Action action) {
+        capture_state_ = CaptureState{};
+        capture_state_.active = true;
+        capture_state_.mode = mode;
+        capture_state_.action = action;
+    }
+
+    void InputBindings::cancelCapture() {
+        capture_state_ = CaptureState{};
+    }
+
+    void InputBindings::captureKey(int key, int mods) {
+        if (!capture_state_.active)
+            return;
+
+        if (key == GLFW_KEY_ESCAPE) {
+            cancelCapture();
+            return;
+        }
+
+        if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT ||
+            key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL ||
+            key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT ||
+            key == GLFW_KEY_LEFT_SUPER || key == GLFW_KEY_RIGHT_SUPER) {
+            return;
+        }
+
+        const KeyTrigger trigger{key, mods, false};
+        setBinding(capture_state_.mode, capture_state_.action, trigger);
+        capture_state_.captured = trigger;
+        capture_state_.active = false;
+    }
+
+    void InputBindings::captureMouseButton(int button, int mods) {
+        if (!capture_state_.active)
+            return;
+
+        if (capture_state_.waiting_for_double_click) {
+            if (button == capture_state_.pending_button && mods == capture_state_.pending_mods) {
+                const auto mouse_btn = static_cast<MouseButton>(button);
+                const MouseButtonTrigger trigger{mouse_btn, mods, true};
+                setBinding(capture_state_.mode, capture_state_.action, trigger);
+                capture_state_.captured = trigger;
+                capture_state_.active = false;
+                capture_state_.waiting_for_double_click = false;
+                capture_state_.pending_button = -1;
+                return;
+            }
+        }
+
+        capture_state_.waiting_for_double_click = true;
+        capture_state_.pending_button = button;
+        capture_state_.pending_mods = mods;
+        capture_state_.first_click_time = std::chrono::steady_clock::now();
+    }
+
+    void InputBindings::updateCapture() {
+        if (!capture_state_.active || !capture_state_.waiting_for_double_click)
+            return;
+
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now - capture_state_.first_click_time).count();
+
+        if (elapsed >= CaptureState::DOUBLE_CLICK_WAIT_TIME) {
+            const auto mouse_btn = static_cast<MouseButton>(capture_state_.pending_button);
+            const MouseDragTrigger trigger{mouse_btn, capture_state_.pending_mods};
+            setBinding(capture_state_.mode, capture_state_.action, trigger);
+            capture_state_.captured = trigger;
+            capture_state_.active = false;
+            capture_state_.waiting_for_double_click = false;
+            capture_state_.pending_button = -1;
+        }
+    }
+
+    std::optional<InputTrigger> InputBindings::getAndClearCaptured() {
+        const auto result = capture_state_.captured;
+        capture_state_.captured.reset();
+        return result;
+    }
+
+    std::vector<std::pair<Action, std::string>> InputBindings::getBindingsForMode(ToolMode mode) const {
+        std::vector<std::pair<Action, std::string>> result;
+        for (const auto& binding : bindings_) {
+            if (binding.mode == mode) {
+                result.emplace_back(binding.action, getTriggerDescription(binding.action, mode));
+            }
         }
         return result;
     }

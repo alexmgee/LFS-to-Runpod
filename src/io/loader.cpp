@@ -199,6 +199,17 @@ namespace lfs::io {
         return false;
     }
 
+    bool Loader::isColmapSparsePath(const std::filesystem::path& path) {
+        if (!safe_is_directory(path)) {
+            return false;
+        }
+
+        const bool has_cameras = safe_exists(path / "cameras.bin") || safe_exists(path / "cameras.txt");
+        const bool has_images_bin = safe_exists(path / "images.bin") || safe_exists(path / "images.txt");
+
+        return has_cameras && has_images_bin;
+    }
+
     // Static method to determine dataset type
     DatasetType Loader::getDatasetType(const std::filesystem::path& path) {
         if (!safe_exists(path)) {

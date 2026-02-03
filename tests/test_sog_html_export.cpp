@@ -25,8 +25,8 @@
 #include <webp/decode.h>
 
 #include "core/cuda/kernels/kdtree_kmeans.hpp"
-#include "core/sogs.hpp"
 #include "core/tensor.hpp"
+#include "io/exporter.hpp"
 #include "io/formats/ply.hpp"
 #include "io/formats/sogs.hpp"
 #include "visualizer/gui/html_viewer_export.hpp"
@@ -153,11 +153,11 @@ protected:
     }
 
     bool generate_sog(const lfs::core::SplatData& splat_data) {
-        lfs::core::SogWriteOptions options{
-            .iterations = 10,
-            .use_gpu = true,
-            .output_path = temp_sog_};
-        auto result = lfs::core::write_sog(splat_data, options);
+        lfs::io::SogSaveOptions options{
+            .output_path = temp_sog_,
+            .kmeans_iterations = 10,
+            .use_gpu = true};
+        auto result = lfs::io::save_sog(splat_data, options);
         return result.has_value();
     }
 };

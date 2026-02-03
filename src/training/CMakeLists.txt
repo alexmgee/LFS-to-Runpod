@@ -35,7 +35,7 @@ target_include_directories(lfs_training_kernels
 
 target_link_libraries(lfs_training_kernels
     PUBLIC
-        lfs_tensor       # For lfs::core::Tensor
+        lfs_core         # For lfs::core::Tensor (tensor merged into lfs_core)
         CUDA::cudart
 )
 
@@ -57,11 +57,11 @@ set_target_properties(lfs_training_kernels PROPERTIES
 # CUDA compiler options for lfs_training_kernels
 target_compile_options(lfs_training_kernels PRIVATE
     # CUDA device code + MSVC host compiler flags (Windows only)
-    $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo --extended-lambda --expt-relaxed-constexpr -Xcompiler=/Od -Xcompiler=/Z7 -Xcompiler=/utf-8 -Xcompiler=/D_CRT_SECURE_NO_WARNINGS --diag-suppress=27>
+    $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:-O0 -g ${LFS_CUDA_DEVICE_DEBUG_FLAGS} -lineinfo --extended-lambda --expt-relaxed-constexpr -Xcompiler=/Od -Xcompiler=/Z7 -Xcompiler=/utf-8 -Xcompiler=/D_CRT_SECURE_NO_WARNINGS --diag-suppress=27>
     $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:-O3 -use_fast_math --extended-lambda --expt-relaxed-constexpr --ptxas-options=-v -Xcompiler=/O2 -Xcompiler=/DNDEBUG -Xcompiler=/utf-8 -Xcompiler=/D_CRT_SECURE_NO_WARNINGS --diag-suppress=27>
 
     # CUDA device code for non-Windows
-    $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo --extended-lambda --expt-relaxed-constexpr>
+    $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Debug>>:-O0 -g ${LFS_CUDA_DEVICE_DEBUG_FLAGS} -lineinfo --extended-lambda --expt-relaxed-constexpr>
     $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release>>:-O3 -use_fast_math --extended-lambda --expt-relaxed-constexpr --ptxas-options=-v>
 )
 
@@ -79,6 +79,7 @@ set(TRAINING_NEW_SOURCES
     strategies/strategy_utils.cpp
     strategies/adc.cpp
     strategies/mcmc.cpp
+    strategies/strategy_factory.cpp
     rasterization/fast_rasterizer.cpp
     rasterization/gsplat_rasterizer.cpp
     components/bilateral_grid.cpp
@@ -87,6 +88,7 @@ set(TRAINING_NEW_SOURCES
     components/ppisp_controller_pool.cu
     components/ppisp_file.cpp
     components/sparsity_optimizer.cpp
+    control/command_api.cpp
     metrics/metrics.cpp
     checkpoint.cpp
     trainer.cpp
@@ -116,10 +118,19 @@ target_include_directories(lfs_training
 target_link_libraries(lfs_training
     PUBLIC
         lfs_core                # Depends on new core module (SplatData, Tensor)
+        lfs_io                  # For CacheLoader, exporter, pipelined loader
+        lfs_event_bridge        # Shared event bridge for cross-module singletons
         lfs_training_kernels    # LibTorch-free SSIM kernels
         fastlfs_backend         # For adam_step_raw CUDA kernel (LibTorch-free)
         gsplat_backend_lfs      # LibTorch-free gsplat rasterization backend
+    PRIVATE
+        $<$<BOOL:${BUILD_PYTHON_BINDINGS}>:lfs_python_utils>
 )
+
+# Python support: define LFS_BUILD_PYTHON_BINDINGS when bindings are enabled
+if(BUILD_PYTHON_BINDINGS)
+    target_compile_definitions(lfs_training PRIVATE LFS_BUILD_PYTHON_BINDINGS)
+endif()
 
 # Set C++ standard
 set_target_properties(lfs_training PROPERTIES

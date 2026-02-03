@@ -132,7 +132,7 @@ namespace lfs::core {
         std::vector<BufferHandle> get_frame_buffers(uint64_t frame_id) const;
         void reset_frame(uint64_t frame_id); // Keeps allocation, resets offset
         void cleanup_frames(int keep_recent = 3);
-        void emergency_cleanup();
+        void full_reset();
 
         Statistics get_statistics() const;
         MemoryInfo get_memory_info() const;

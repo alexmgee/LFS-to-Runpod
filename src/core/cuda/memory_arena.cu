@@ -353,39 +353,23 @@ namespace lfs::core {
         cudaFree(dummy);
     }
 
-    void RasterizerMemoryArena::emergency_cleanup() {
-        std::lock_guard<std::mutex> lock1(arena_mutex_);
-        std::lock_guard<std::mutex> lock2(frame_mutex_);
+    void RasterizerMemoryArena::full_reset() {
+        const std::lock_guard<std::mutex> lock1(arena_mutex_);
+        const std::lock_guard<std::mutex> lock2(frame_mutex_);
 
-        LOG_WARN("Emergency cleanup started");
+        std::erase_if(frame_contexts_, [](const auto& kv) { return !kv.second.is_active; });
 
-        // Clear all inactive frames
-        auto it = frame_contexts_.begin();
-        while (it != frame_contexts_.end()) {
-            if (!it->second.is_active) {
-                it = frame_contexts_.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        // Decommit unused memory BEFORE resetting offsets
         for (auto& [device, arena] : device_arenas_) {
             if (arena) {
                 decommit_unused_memory(*arena);
                 arena->offset.store(0, std::memory_order_release);
-                LOG_DEBUG("Reset arena on device %d (committed: %zu MB)", device, arena->committed_size >> 20);
+                cudaSetDevice(device);
+                cudaDeviceSynchronize();
             }
         }
 
         empty_cuda_cache();
-
-        for (const auto& [device, arena] : device_arenas_) {
-            cudaSetDevice(device);
-            cudaDeviceSynchronize();
-        }
-
-        LOG_WARN("Emergency cleanup completed");
+        LOG_DEBUG("Arena reset");
     }
 
     RasterizerMemoryArena::Arena& RasterizerMemoryArena::get_or_create_arena(int device) {

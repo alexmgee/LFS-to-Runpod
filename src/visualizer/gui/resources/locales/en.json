@@ -451,7 +451,8 @@
     "gaussian_rings": "Gaussian Rings",
     "center_markers": "Center Markers",
     "perspective": "Perspective (O)",
-    "orthographic": "Orthographic (O)"
+    "orthographic": "Orthographic (O)",
+    "sequencer": "Sequencer"
   },
 
   "transform": {
@@ -617,6 +618,7 @@
     "loss": "Loss:",
     "gaussians_count": "%s Gaussians",
     "exporting": "Exporting %s...",
+    "exporting_video": "Exporting Video...",
     "importing": "Importing %s...",
     "import_complete": "Import complete: %zu images, %zu points",
     "import_failed": "Import failed: %s",
@@ -724,6 +726,9 @@
   },
 
   "image_preview": {
+    "image_section": "IMAGE",
+    "file_section": "FILE",
+    "view_section": "VIEW",
     "view": "View",
     "navigate": "Navigate",
     "fit_to_window": "Fit to Window",

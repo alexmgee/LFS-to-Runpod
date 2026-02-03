@@ -129,6 +129,12 @@ This project builds upon and is inspired by the following:
 | [NVIDIA nvImageCodec](https://github.com/NVIDIA/nvImageCodec) | GPU-accelerated image encoding/decoding | Apache-2.0 |
 | [Intel TBB](https://github.com/oneapi-src/oneTBB) | Threading Building Blocks | Apache-2.0 |
 
+### Video Encoding
+| Project | Description | License |
+|---------|-------------|---------|
+| [FFmpeg](https://ffmpeg.org/) | Video encoding (libavcodec, libavformat, libswscale) | LGPL-2.1+ / GPL-2.0+ |
+| [x264](https://www.videolan.org/developers/x264.html) | H.264 software encoder | GPL-2.0+ |
+
 ### Data & I/O Libraries
 | Project | Description | License |
 |---------|-------------|---------|

@@ -4,16 +4,27 @@
 
 #include "app/application.hpp"
 #include "app/splash_screen.hpp"
+#include "control/command_api.hpp"
 #include "core/cuda_version.hpp"
+#include "core/event_bridge/command_center_bridge.hpp"
+#include "core/events.hpp"
+#include "core/image_loader.hpp"
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
+#include "io/cache_image_loader.hpp"
 #include "rendering/framebuffer_factory.hpp"
 #include "training/trainer.hpp"
 #include "training/training_setup.hpp"
 #include "visualizer/scene/scene.hpp"
 #include "visualizer/visualizer.hpp"
 
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+#include "python/runner.hpp"
+#include "visualizer/gui/panels/python_scripts_panel.hpp"
+#endif
+
+#include <cstdlib>
 #include <cuda_runtime.h>
 #include <rasterization_api.h>
 
@@ -34,6 +45,8 @@ namespace lfs::app {
             }
 
             checkCudaDriverVersion();
+            lfs::event::CommandCenterBridge::instance().set(&lfs::training::CommandCenter::instance());
+
             LOG_INFO("Starting headless training...");
 
             vis::Scene scene;
@@ -49,6 +62,14 @@ namespace lfs::app {
             }
 
             auto trainer = std::make_unique<training::Trainer>(scene);
+
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+            if (!params->python_scripts.empty()) {
+                trainer->set_python_scripts(params->python_scripts);
+                vis::gui::panels::PythonScriptManagerState::getInstance().setScripts(params->python_scripts);
+            }
+#endif
+
             if (const auto result = trainer->initialize(*params); !result) {
                 LOG_ERROR("Failed to initialize trainer: {}", result.error());
                 return 1;
@@ -58,10 +79,25 @@ namespace lfs::app {
 
             if (const auto result = trainer->train(); !result) {
                 LOG_ERROR("Training error: {}", result.error());
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+                if (!params->python_scripts.empty()) {
+                    python::finalize();
+                    std::_Exit(1);
+                }
+#endif
                 return 1;
             }
 
             LOG_INFO("Headless training completed");
+
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+            if (!params->python_scripts.empty()) {
+                python::finalize();
+                // Use _Exit to skip static destruction and avoid nanobind crashes.
+                // All data is saved, callbacks cleaned up, so this is safe.
+                std::_Exit(0);
+            }
+#endif
             return 0;
         }
 
@@ -98,11 +134,19 @@ namespace lfs::app {
                 lfs::rendering::disableInterop();
             }
 
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+            if (!params->python_scripts.empty()) {
+                vis::gui::panels::PythonScriptManagerState::getInstance().setScripts(params->python_scripts);
+            }
+#endif
+
             if (params->optimization.no_splash) {
                 warmupCuda();
             } else {
                 SplashScreen::runWithDelay([]() { warmupCuda(); return 0; });
             }
+
+            lfs::event::CommandCenterBridge::instance().set(&lfs::training::CommandCenter::instance());
 
             auto viewer = vis::Visualizer::create({
                 .title = "LichtFeld Studio",
@@ -130,6 +174,9 @@ namespace lfs::app {
                 if (params->view_paths.size() > 1) {
                     viewer->consolidateModels();
                 }
+            } else if (params->import_cameras_path) {
+                LOG_INFO("Importing COLMAP cameras: {}", lfs::core::path_to_utf8(*params->import_cameras_path));
+                lfs::core::events::cmd::ImportColmapCameras{.sparse_path = *params->import_cameras_path}.emit();
             } else if (params->resume_checkpoint) {
                 LOG_INFO("Loading checkpoint: {}", lfs::core::path_to_utf8(*params->resume_checkpoint));
                 if (const auto result = viewer->loadCheckpointForTraining(*params->resume_checkpoint); !result) {
@@ -145,6 +192,11 @@ namespace lfs::app {
             }
 
             viewer->run();
+
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+            python::finalize();
+            std::_Exit(0);
+#endif
             return 0;
         }
 
@@ -165,6 +217,11 @@ namespace lfs::app {
     } // namespace
 
     int Application::run(std::unique_ptr<lfs::core::param::TrainingParameters> params) {
+        lfs::core::set_image_loader([](const lfs::core::ImageLoadParams& p) {
+            return lfs::io::CacheLoader::getInstance().load_cached_image(
+                p.path, {.resize_factor = p.resize_factor, .max_width = p.max_width, .cuda_stream = p.stream});
+        });
+
         if (params->optimization.headless) {
             return runHeadless(std::move(params));
         }

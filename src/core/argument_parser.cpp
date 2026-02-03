@@ -70,76 +70,96 @@ namespace {
 
         try {
             ::args::ArgumentParser parser(
-                "LichtFeld Studio: High-performance CUDA implementation of 3D Gaussian Splatting algorithm. \n",
-                "Usage:\n"
-                "  Training: LichtFeld-Studio --data-path <path> --output-path <path> [options]\n"
-                "  Resume:   LichtFeld-Studio --resume <checkpoint.resume> [options]\n"
-                "  Viewing:  LichtFeld-Studio --view <file_or_directory> [options]\n");
+                "LichtFeld Studio: High-performance CUDA implementation of 3D Gaussian Splatting algorithm.\n",
+                "\nSUBCOMMANDS:\n"
+                "convert -- Convert between .ply, .sog, .spz, .html\n"
+                "plugin -- Manage plugins (create, check, list)\n"
+                "\n"
+                "Run '<subcommand> --help' for details.\n"
+                "\n"
+                "EXAMPLES:\n"
+                "lichtfeld-studio -d ./data -o ./output\n"
+                "lichtfeld-studio --resume checkpoint.resume\n"
+                "lichtfeld-studio -v model.ply\n"
+                "lichtfeld-studio convert in.ply out.spz\n"
+                "lichtfeld-studio plugin create my_plugin\n"
+                "\n"
+                "ENVIRONMENT:\n"
+                "LOG_LEVEL -- Set log level (trace/debug/info/perf/warn/error)\n");
+            parser.helpParams.width = 240;
 
-            // Define all arguments
-            ::args::HelpFlag help(parser, "help", "Display help menu", {'h', "help"});
+            // =============================================================================
+            // MODE SELECTION
+            // =============================================================================
+            ::args::Group mode_group(parser, "MODE SELECTION:");
+            ::args::HelpFlag help(mode_group, "help", "Display help menu", {'h', "help"});
+            ::args::Flag version(mode_group, "version", "Display version information", {'V', "version"});
+            ::args::ValueFlag<std::string> view_ply(mode_group, "path", "View splat file(s). Supports .ply, .sog, .resume. If directory, loads all.", {'v', "view"});
+            ::args::ValueFlag<std::string> resume_checkpoint(mode_group, "checkpoint", "Resume training from checkpoint file", {"resume"});
             ::args::CompletionFlag completion(parser, {"complete"});
 
-            // PLY viewing mode (supports single file or directory with multiple files)
-            ::args::ValueFlag<std::string> view_ply(parser, "path", "View splat file(s). Supports .ply, .sog, .resume. If directory, loads all.", {'v', "view"});
+            // =============================================================================
+            // TRAINING PATHS
+            // =============================================================================
+            ::args::Group paths_sep(parser, " ");
+            ::args::Group paths_group(parser, "TRAINING PATHS:");
+            ::args::ValueFlag<std::string> data_path(paths_group, "data_path", "Path to training data", {'d', "data-path"});
+            ::args::ValueFlag<std::string> output_path(paths_group, "output_path", "Path to output", {'o', "output-path"});
+            ::args::ValueFlag<std::string> config_file(paths_group, "config_file", "LichtFeldStudio config file (json)", {"config"});
+            ::args::ValueFlag<std::string> init_path(paths_group, "path", "Initialize from splat file (.ply, .sog, .spz, .resume)", {"init"});
 
-            // Resume from checkpoint
-            ::args::ValueFlag<std::string> resume_checkpoint(parser, "checkpoint", "Resume training from checkpoint file", {"resume"});
+            ::args::ValueFlag<std::string> import_cameras(paths_group, "path", "Import COLMAP cameras from sparse folder (no images required)", {"import-cameras"});
 
-            // Training mode arguments
-            ::args::ValueFlag<std::string> data_path(parser, "data_path", "Path to training data", {'d', "data-path"});
-            ::args::ValueFlag<std::string> output_path(parser, "output_path", "Path to output", {'o', "output-path"});
+            // =============================================================================
+            // TRAINING PARAMETERS
+            // =============================================================================
+            ::args::Group training_sep(parser, " ");
+            ::args::Group training_group(parser, "TRAINING PARAMETERS:");
+            ::args::ValueFlag<uint32_t> iterations(training_group, "iterations", "Number of iterations", {'i', "iter"});
+            ::args::ValueFlag<std::string> strategy(training_group, "strategy", "Optimization strategy: mcmc, adc", {"strategy"});
+            ::args::ValueFlag<int> sh_degree(training_group, "sh_degree", "Max SH degree [0-3]", {"sh-degree"});
+            ::args::ValueFlag<int> sh_degree_interval(training_group, "sh_degree_interval", "SH degree interval", {"sh-degree-interval"});
+            ::args::ValueFlag<int> max_cap(training_group, "max_cap", "Max Gaussians for MCMC", {"max-cap"});
+            ::args::ValueFlag<float> min_opacity(training_group, "min_opacity", "Minimum opacity threshold", {"min-opacity"});
+            ::args::ValueFlag<float> steps_scaler(training_group, "steps_scaler", "Scale training steps by factor", {"steps-scaler"});
+            ::args::ValueFlag<int> tile_mode(training_group, "tile_mode", "Tile mode for memory-efficient training: 1=1 tile, 2=2 tiles, 4=4 tiles (default: 1)", {"tile-mode"});
 
-            // config file argument
-            ::args::ValueFlag<std::string> config_file(parser, "config_file", "LichtFeldStudio config file (json)", {"config"});
+            // =============================================================================
+            // INITIALIZATION
+            // =============================================================================
+            ::args::Group init_sep(parser, " ");
+            ::args::Group init_group(parser, "INITIALIZATION:");
+            ::args::Flag random(init_group, "random", "Use random initialization instead of SfM", {"random"});
+            ::args::ValueFlag<int> init_num_pts(init_group, "init_num_pts", "Number of random initialization points", {"init-num-pts"});
+            ::args::ValueFlag<float> init_extent(init_group, "init_extent", "Extent of random initialization", {"init-extent"});
 
-            // Optional value arguments
-            ::args::ValueFlag<uint32_t> iterations(parser, "iterations", "Number of iterations", {'i', "iter"});
-            ::args::ValueFlag<int> max_cap(parser, "max_cap", "Max Gaussians for MCMC", {"max-cap"});
-            ::args::ValueFlag<std::string> images_folder(parser, "images", "Images folder name", {"images"});
-            ::args::ValueFlag<int> test_every(parser, "test_every", "Use every Nth image as test", {"test-every"});
-            ::args::ValueFlag<float> steps_scaler(parser, "steps_scaler", "Scale training steps by factor", {"steps-scaler"});
-            ::args::ValueFlag<int> sh_degree_interval(parser, "sh_degree_interval", "SH degree interval", {"sh-degree-interval"});
-            ::args::ValueFlag<int> sh_degree(parser, "sh_degree", "Max SH degree [0-3]", {"sh-degree"});
-            ::args::ValueFlag<float> min_opacity(parser, "min_opacity", "Minimum opacity threshold", {"min-opacity"});
-            ::args::ValueFlag<std::string> strategy(parser, "strategy", "Optimization strategy: mcmc, adc", {"strategy"});
-            ::args::ValueFlag<int> init_num_pts(parser, "init_num_pts", "Number of random initialization points", {"init-num-pts"});
-            ::args::ValueFlag<float> init_extent(parser, "init_extent", "Extent of random initialization", {"init-extent"});
-            ::args::ValueFlagList<std::string> timelapse_images(parser, "timelapse_images", "Image filenames to render timelapse images for", {"timelapse-images"});
-            ::args::ValueFlag<int> timelapse_every(parser, "timelapse_every", "Render timelapse image every N iterations (default: 50)", {"timelapse-every"});
-            ::args::ValueFlag<std::string> init_path(parser, "path", "Initialize from splat file (.ply, .sog, .spz, .resume)", {"init"});
-            ::args::ValueFlag<int> tile_mode(parser, "tile_mode", "Tile mode for memory-efficient training: 1=1 tile, 2=2 tiles, 4=4 tiles (default: 1)", {"tile-mode"});
+            // =============================================================================
+            // DATASET OPTIONS
+            // =============================================================================
+            ::args::Group dataset_sep(parser, " ");
+            ::args::Group dataset_group(parser, "DATASET OPTIONS:");
+            ::args::ValueFlag<std::string> images_folder(dataset_group, "images", "Images folder name", {"images"});
+            ::args::ValueFlag<int> test_every(dataset_group, "test_every", "Use every Nth image as test", {"test-every"});
+            ::args::MapFlag<std::string, int> resize_factor(dataset_group, "resize_factor",
+                                                            "Resize resolution by factor: auto, 1, 2, 4, 8 (default: auto)",
+                                                            {'r', "resize_factor"},
+                                                            std::unordered_map<std::string, int>{
+                                                                {"auto", 1},
+                                                                {"1", 1},
+                                                                {"2", 2},
+                                                                {"4", 4},
+                                                                {"8", 8}});
+            ::args::ValueFlag<int> max_width(dataset_group, "max_width", "Max width of images in px (default: 3840)", {"max-width"});
+            ::args::Flag no_cpu_cache(dataset_group, "no_cpu_cache", "Disable CPU memory caching (default: enabled)", {"no-cpu-cache"});
+            ::args::Flag no_fs_cache(dataset_group, "no_fs_cache", "Disable filesystem caching (default: enabled)", {"no-fs-cache"});
+            ::args::Flag undistort(dataset_group, "undistort", "Undistort images on-the-fly before training", {"undistort"});
 
-            // Sparsity optimization arguments
-            ::args::ValueFlag<int> sparsify_steps(parser, "sparsify_steps", "Number of steps for sparsification (default: 15000)", {"sparsify-steps"});
-            ::args::ValueFlag<float> init_rho(parser, "init_rho", "Initial ADMM penalty parameter (default: 0.0005)", {"init-rho"});
-            ::args::ValueFlag<float> prune_ratio(parser, "prune_ratio", "Final pruning ratio for sparsity (default: 0.6)", {"prune-ratio"});
-
-            // Logging options
-            ::args::ValueFlag<std::string> log_level(parser, "level", "Log level: trace, debug, info, perf, warn, error, critical, off (default: info)", {"log-level"});
-            ::args::ValueFlag<std::string> log_file(parser, "file", "Optional log file path", {"log-file"});
-            ::args::ValueFlag<std::string> log_filter(parser, "pattern", "Filter log messages (glob: *foo*, regex: \\\\d+)", {"log-filter"});
-
-            // Optional flag arguments
-            ::args::Flag enable_mip(parser, "enable_mip", "Enable mip filter (anti-aliasing)", {"enable-mip"});
-            ::args::Flag use_bilateral_grid(parser, "bilateral_grid", "Enable bilateral grid filtering", {"bilateral-grid"});
-            ::args::Flag use_ppisp(parser, "ppisp", "Enable PPISP for per-camera appearance modeling", {"ppisp"});
-            ::args::Flag ppisp_controller(parser, "ppisp_controller", "Enable PPISP controller for novel views", {"ppisp-controller"});
-            ::args::Flag enable_eval(parser, "eval", "Enable evaluation during training", {"eval"});
-            ::args::Flag headless(parser, "headless", "Disable visualization during training", {"headless"});
-            ::args::Flag auto_train(parser, "train", "Start training immediately on startup", {"train"});
-            ::args::Flag no_splash(parser, "no_splash", "Skip splash screen on startup", {"no-splash"});
-            ::args::Flag no_interop(parser, "no_interop", "Disable CUDA-GL interop (use CPU fallback for display)", {"no-interop"});
-            ::args::Flag enable_save_eval_images(parser, "save_eval_images", "Save eval images and depth maps", {"save-eval-images"});
-            ::args::Flag save_depth(parser, "save_depth", "Save depth maps during training", {"save-depth"});
-            ::args::Flag bg_modulation(parser, "bg_modulation", "Enable sinusoidal background modulation mixed with base background", {"bg-modulation"});
-            ::args::Flag random(parser, "random", "Use random initialization instead of SfM", {"random"});
-            ::args::Flag gut(parser, "gut", "Enable GUT mode", {"gut"});
-            ::args::Flag undistort(parser, "undistort", "Undistort images on-the-fly before training", {"undistort"});
-            ::args::Flag enable_sparsity(parser, "enable_sparsity", "Enable sparsity optimization", {"enable-sparsity"});
-
-            // Mask-related arguments
-            ::args::MapFlag<std::string, lfs::core::param::MaskMode> mask_mode(parser, "mask_mode",
+            // =============================================================================
+            // MASK OPTIONS
+            // =============================================================================
+            ::args::Group mask_sep(parser, " ");
+            ::args::Group mask_group(parser, "MASK OPTIONS:");
+            ::args::MapFlag<std::string, lfs::core::param::MaskMode> mask_mode(mask_group, "mask_mode",
                                                                                "Mask mode: none, segment, ignore, alpha_consistent (default: none)",
                                                                                {"mask-mode"},
                                                                                std::unordered_map<std::string, lfs::core::param::MaskMode>{
@@ -147,23 +167,71 @@ namespace {
                                                                                    {"segment", lfs::core::param::MaskMode::Segment},
                                                                                    {"ignore", lfs::core::param::MaskMode::Ignore},
                                                                                    {"alpha_consistent", lfs::core::param::MaskMode::AlphaConsistent}});
-            ::args::Flag invert_masks(parser, "invert_masks", "Invert mask values (swap object/background)", {"invert-masks"});
-            ::args::Flag no_alpha_as_mask(parser, "no_alpha_as_mask", "Disable automatic alpha-as-mask for RGBA images", {"no-alpha-as-mask"});
+            ::args::Flag invert_masks(mask_group, "invert_masks", "Invert mask values (swap object/background)", {"invert-masks"});
+            ::args::Flag no_alpha_as_mask(mask_group, "no_alpha_as_mask", "Disable automatic alpha-as-mask for RGBA images", {"no-alpha-as-mask"});
 
-            ::args::MapFlag<std::string, int> resize_factor(parser, "resize_factor",
-                                                            "resize resolution by this factor. Options: auto, 1, 2, 4, 8 (default: auto)",
-                                                            {'r', "resize_factor"},
-                                                            // load_image only supports those resizes
-                                                            std::unordered_map<std::string, int>{
-                                                                {"auto", 1},
-                                                                {"1", 1},
-                                                                {"2", 2},
-                                                                {"4", 4},
-                                                                {"8", 8}});
+            // =============================================================================
+            // SPARSITY OPTIMIZATION
+            // =============================================================================
+            ::args::Group sparsity_sep(parser, " ");
+            ::args::Group sparsity_group(parser, "SPARSITY OPTIMIZATION:");
+            ::args::Flag enable_sparsity(sparsity_group, "enable_sparsity", "Enable sparsity optimization", {"enable-sparsity"});
+            ::args::ValueFlag<int> sparsify_steps(sparsity_group, "sparsify_steps", "Number of steps for sparsification (default: 15000)", {"sparsify-steps"});
+            ::args::ValueFlag<float> init_rho(sparsity_group, "init_rho", "Initial ADMM penalty parameter (default: 0.0005)", {"init-rho"});
+            ::args::ValueFlag<float> prune_ratio(sparsity_group, "prune_ratio", "Final pruning ratio for sparsity (default: 0.6)", {"prune-ratio"});
 
-            ::args::ValueFlag<int> max_width(parser, "max_width", "Max width of images in px (default: 3840)", {"max-width"});
-            ::args::ValueFlag<bool> use_cpu_cache(parser, "use_cpu_cache", "if true - try using cpu memory to cache images (default: true)", {"use_cpu_cache"});
-            ::args::ValueFlag<bool> use_fs_cache(parser, "use_fs_cache", "if true - try using temporary file system to cache images (default: true)", {"use_fs_cache"});
+            // =============================================================================
+            // RENDERING OPTIONS
+            // =============================================================================
+            ::args::Group rendering_sep(parser, " ");
+            ::args::Group rendering_group(parser, "RENDERING OPTIONS:");
+            ::args::Flag enable_mip(rendering_group, "enable_mip", "Enable mip filter (anti-aliasing)", {"enable-mip"});
+            ::args::Flag use_bilateral_grid(rendering_group, "bilateral_grid", "Enable bilateral grid filtering", {"bilateral-grid"});
+            ::args::Flag use_ppisp(rendering_group, "ppisp", "Enable PPISP for per-camera appearance modeling", {"ppisp"});
+            ::args::Flag ppisp_controller(rendering_group, "ppisp_controller", "Enable PPISP controller for novel views", {"ppisp-controller"});
+            ::args::Flag bg_modulation(rendering_group, "bg_modulation", "Enable sinusoidal background modulation", {"bg-modulation"});
+            ::args::Flag gut(rendering_group, "gut", "Enable GUT mode", {"gut"});
+
+            // =============================================================================
+            // OUTPUT OPTIONS
+            // =============================================================================
+            ::args::Group output_sep(parser, " ");
+            ::args::Group output_group(parser, "OUTPUT OPTIONS:");
+            ::args::Flag enable_eval(output_group, "eval", "Enable evaluation during training", {"eval"});
+            ::args::Flag enable_save_eval_images(output_group, "save_eval_images", "Save evaluation comparison images (GT vs rendered)", {"save-eval-images"});
+            ::args::Flag save_depth(output_group, "save_depth", "[TODO] Save depth maps during training (not yet implemented)", {"save-depth"});
+            ::args::ValueFlagList<std::string> timelapse_images(output_group, "timelapse_images", "Image filenames to render timelapse images for", {"timelapse-images"});
+            ::args::ValueFlag<int> timelapse_every(output_group, "timelapse_every", "Render timelapse image every N iterations (default: 50)", {"timelapse-every"});
+
+            // =============================================================================
+            // UI OPTIONS
+            // =============================================================================
+            ::args::Group ui_sep(parser, " ");
+            ::args::Group ui_group(parser, "UI OPTIONS:");
+            ::args::Flag headless(ui_group, "headless", "Disable visualization during training", {"headless"});
+            ::args::Flag auto_train(ui_group, "train", "Start training immediately on startup", {"train"});
+            ::args::Flag no_splash(ui_group, "no_splash", "Skip splash screen on startup", {"no-splash"});
+            ::args::Flag no_interop(ui_group, "no_interop", "Disable CUDA-GL interop (use CPU fallback for display)", {"no-interop"});
+            ::args::Flag debug_python(ui_group, "debug_python", "Start debugpy listener on port 5678 for plugin debugging", {"debug-python"});
+            ::args::ValueFlag<int> debug_python_port(ui_group, "port", "Port for debugpy listener (default: 5678)", {"debug-python-port"});
+
+            // =============================================================================
+            // LOGGING
+            // =============================================================================
+            ::args::Group logging_sep(parser, " ");
+            ::args::Group logging_group(parser, "LOGGING:");
+            ::args::ValueFlag<std::string> log_level(logging_group, "level", "Log level: trace, debug, info, perf, warn, error, critical, off (default: info)", {"log-level"});
+            ::args::Flag verbose(logging_group, "verbose", "Verbose output (equivalent to --log-level debug)", {"verbose"});
+            ::args::Flag quiet(logging_group, "quiet", "Suppress non-error output (equivalent to --log-level error)", {'q', "quiet"});
+            ::args::ValueFlag<std::string> log_file(logging_group, "file", "Optional log file path", {"log-file"});
+            ::args::ValueFlag<std::string> log_filter(logging_group, "pattern", "Filter log messages (glob: *foo*, regex: \\\\d+)", {"log-filter"});
+
+            // =============================================================================
+            // EXTENSIONS
+            // =============================================================================
+            ::args::Group extensions_sep(parser, " ");
+            ::args::Group extensions_group(parser, "EXTENSIONS:");
+            ::args::ValueFlagList<std::string> python_scripts(extensions_group, "path", "Python script(s) for custom training callbacks", {"python-script"});
 
             // Parse arguments
             try {
@@ -189,7 +257,14 @@ namespace {
                 if (const char* env_level = std::getenv("LOG_LEVEL")) {
                     level = parse_log_level(env_level);
                 }
-                // CLI argument overrides environment variable
+                // Verbose/quiet flags override environment variable
+                if (verbose) {
+                    level = lfs::core::LogLevel::Debug;
+                }
+                if (quiet) {
+                    level = lfs::core::LogLevel::Error;
+                }
+                // CLI --log-level takes final precedence
                 if (log_level) {
                     level = parse_log_level(::args::get(log_level));
                 }
@@ -262,6 +337,22 @@ namespace {
 
                 if (gut) {
                     params.optimization.gut = true;
+                }
+                return std::make_tuple(ParseResult::Success, std::function<void()>{});
+            }
+
+            // Import COLMAP cameras only (no images required)
+            if (import_cameras) {
+                const auto& import_path_str = ::args::get(import_cameras);
+                if (!import_path_str.empty()) {
+                    const std::filesystem::path import_path = lfs::core::utf8_to_path(import_path_str);
+                    if (!std::filesystem::exists(import_path)) {
+                        return std::unexpected(std::format("Path does not exist: {}", lfs::core::path_to_utf8(import_path)));
+                    }
+                    if (!std::filesystem::is_directory(import_path)) {
+                        return std::unexpected(std::format("Expected directory for --import-cameras: {}", lfs::core::path_to_utf8(import_path)));
+                    }
+                    params.import_cameras_path = import_path;
                 }
                 return std::make_tuple(ParseResult::Success, std::function<void()>{});
             }
@@ -375,14 +466,46 @@ namespace {
                 }
             }
 
+            // Validate sh_degree (0-3)
+            if (sh_degree) {
+                int degree = ::args::get(sh_degree);
+                if (degree < 0 || degree > 3) {
+                    return std::unexpected("ERROR: --sh-degree must be 0, 1, 2, or 3");
+                }
+            }
+
+            // Validate min_opacity (0.0-1.0)
+            if (min_opacity) {
+                float opacity = ::args::get(min_opacity);
+                if (opacity < 0.0f || opacity > 1.0f) {
+                    return std::unexpected("ERROR: --min-opacity must be between 0.0 and 1.0");
+                }
+            }
+
+            // Validate init_num_pts (> 0)
+            if (init_num_pts) {
+                int pts = ::args::get(init_num_pts);
+                if (pts <= 0) {
+                    return std::unexpected("ERROR: --init-num-pts must be greater than 0");
+                }
+            }
+
+            // Validate prune_ratio (0.0-1.0)
+            if (prune_ratio) {
+                float ratio = ::args::get(prune_ratio);
+                if (ratio < 0.0f || ratio > 1.0f) {
+                    return std::unexpected("ERROR: --prune-ratio must be between 0.0 and 1.0");
+                }
+            }
+
             // Create lambda to apply command line overrides after JSON loading
             auto apply_cmd_overrides = [&params,
                                         // Capture values, not references
                                         iterations_val = iterations ? std::optional<uint32_t>(::args::get(iterations)) : std::optional<uint32_t>(),
                                         resize_factor_val = resize_factor ? std::optional<int>(::args::get(resize_factor)) : std::optional<int>(1), // default 1
                                         max_width_val = max_width ? std::optional<int>(::args::get(max_width)) : std::optional<int>(3840),          // default 3840
-                                        use_cpu_cache_val = use_cpu_cache ? std::optional<bool>(::args::get(use_cpu_cache)) : std::optional<bool>(),
-                                        use_fs_cache_val = use_fs_cache ? std::optional<bool>(::args::get(use_fs_cache)) : std::optional<bool>(),
+                                        no_cpu_cache_flag = static_cast<bool>(no_cpu_cache),
+                                        no_fs_cache_flag = static_cast<bool>(no_fs_cache),
                                         max_cap_val = max_cap ? std::optional<int>(::args::get(max_cap)) : std::optional<int>(),
                                         config_file_val = config_file ? std::optional<std::string>(::args::get(config_file)) : std::optional<std::string>(),
                                         images_folder_val = images_folder ? std::optional<std::string>(::args::get(images_folder)) : std::optional<std::string>(),
@@ -403,6 +526,8 @@ namespace {
                                         prune_ratio_val = prune_ratio ? std::optional<float>(::args::get(prune_ratio)) : std::optional<float>(),
                                         // Mask parameters
                                         mask_mode_val = mask_mode ? std::optional<lfs::core::param::MaskMode>(::args::get(mask_mode)) : std::optional<lfs::core::param::MaskMode>(),
+                                        // Python scripts
+                                        python_scripts_val = python_scripts ? std::optional<std::vector<std::string>>(::args::get(python_scripts)) : std::optional<std::vector<std::string>>(),
                                         // Capture flag states
                                         enable_mip_flag = bool(enable_mip),
                                         use_bilateral_grid_flag = bool(use_bilateral_grid),
@@ -413,6 +538,8 @@ namespace {
                                         auto_train_flag = bool(auto_train),
                                         no_splash_flag = bool(no_splash),
                                         no_interop_flag = bool(no_interop),
+                                        debug_python_flag = bool(debug_python),
+                                        debug_python_port_val = debug_python_port ? std::optional<int>(::args::get(debug_python_port)) : std::optional<int>(),
                                         enable_save_eval_images_flag = bool(enable_save_eval_images),
                                         bg_modulation_flag = bool(bg_modulation),
                                         random_flag = bool(random),
@@ -439,8 +566,10 @@ namespace {
                 setVal(iterations_val, opt.iterations);
                 setVal(resize_factor_val, ds.resize_factor);
                 setVal(max_width_val, ds.max_width);
-                setVal(use_cpu_cache_val, ds.loading_params.use_cpu_memory);
-                setVal(use_fs_cache_val, ds.loading_params.use_fs_cache);
+                if (no_cpu_cache_flag)
+                    ds.loading_params.use_cpu_memory = false;
+                if (no_fs_cache_flag)
+                    ds.loading_params.use_fs_cache = false;
                 setVal(max_cap_val, opt.max_cap);
                 setVal(images_folder_val, ds.images);
                 setVal(test_every_val, ds.test_every);
@@ -471,6 +600,8 @@ namespace {
                 setFlag(auto_train_flag, opt.auto_train);
                 setFlag(no_splash_flag, opt.no_splash);
                 setFlag(no_interop_flag, opt.no_interop);
+                setFlag(debug_python_flag, opt.debug_python);
+                setVal(debug_python_port_val, opt.debug_python_port);
                 setFlag(enable_save_eval_images_flag, opt.enable_save_eval_images);
                 setFlag(bg_modulation_flag, opt.bg_modulation);
                 setFlag(random_flag, opt.random);
@@ -486,6 +617,13 @@ namespace {
                 // Also propagate to dataset config for loading
                 ds.invert_masks = opt.invert_masks;
                 ds.mask_threshold = opt.mask_threshold;
+
+                // Python scripts
+                if (python_scripts_val) {
+                    for (const auto& script : *python_scripts_val) {
+                        params.python_scripts.emplace_back(script);
+                    }
+                }
             };
 
             return std::make_tuple(ParseResult::Success, apply_cmd_overrides);
@@ -613,12 +751,63 @@ lfs::core::args::parse_args(const int argc, const char* const argv[]) {
     if (argc >= 2) {
         const std::string_view arg1 = argv[1];
 
+        if (arg1 == "-V" || arg1 == "--version") {
+            return VersionMode{};
+        }
+
         if (arg1 == "--warmup") {
             return WarmupMode{};
         }
 
+        if (arg1 == "--mcp") {
+            McpMode mode;
+            if (argc >= 3) {
+                const std::filesystem::path scene_path = lfs::core::utf8_to_path(argv[2]);
+                if (std::filesystem::exists(scene_path)) {
+                    mode.scene_path = scene_path;
+                }
+            }
+            return mode;
+        }
+
         if (arg1 == "convert") {
             // Handle convert subcommand below
+        } else if (arg1 == "plugin") {
+            if (argc < 3) {
+                return std::unexpected("Usage: LichtFeld-Studio plugin <create|check|list> [name]");
+            }
+
+            const std::string_view subcmd = argv[2];
+            PluginMode mode;
+
+            if (subcmd == "create") {
+                if (argc < 4) {
+                    return std::unexpected("Usage: LichtFeld-Studio plugin create <name>");
+                }
+                mode.command = PluginMode::Command::CREATE;
+                mode.name = argv[3];
+            } else if (subcmd == "check") {
+                if (argc < 4) {
+                    return std::unexpected("Usage: LichtFeld-Studio plugin check <name>");
+                }
+                mode.command = PluginMode::Command::CHECK;
+                mode.name = argv[3];
+            } else if (subcmd == "list") {
+                mode.command = PluginMode::Command::LIST;
+            } else if (subcmd == "-h" || subcmd == "--help") {
+                std::print(R"(Usage: LichtFeld-Studio plugin <command> [name]
+
+Commands:
+  create <name>   Create plugin with venv and VS Code config
+  check <name>    Validate plugin structure
+  list            List installed plugins
+)");
+                return HelpMode{};
+            } else {
+                return std::unexpected(std::format("Unknown plugin command: {}", subcmd));
+            }
+
+            return mode;
         } else {
             auto result = parse_args_and_params(argc, argv);
             if (!result)

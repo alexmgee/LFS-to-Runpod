@@ -450,7 +450,8 @@
     "gaussian_rings": "ガウシアンリング",
     "center_markers": "センターマーカー",
     "perspective": "透視投影 (O)",
-    "orthographic": "平行投影 (O)"
+    "orthographic": "平行投影 (O)",
+    "sequencer": "シーケンサー"
   },
 
   "transform": {
@@ -605,6 +606,7 @@
     "loss": "損失:",
     "gaussians_count": "%s ガウシアン",
     "exporting": "%s をエクスポート中...",
+    "exporting_video": "動画を書き出し中...",
     "importing": "%s をインポート中...",
     "import_complete": "インポート完了: %zu 画像, %zu ポイント",
     "import_failed": "インポート失敗: %s",
@@ -712,6 +714,9 @@
   },
 
   "image_preview": {
+    "image_section": "画像",
+    "file_section": "ファイル",
+    "view_section": "表示",
     "view": "表示",
     "navigate": "ナビゲート",
     "fit_to_window": "ウィンドウに合わせる",

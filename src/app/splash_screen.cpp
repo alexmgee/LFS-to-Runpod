@@ -12,9 +12,6 @@
 #include <GLFW/glfw3.h>
 // clang-format on
 
-// Enable UTF-8 file path support in stb_image on Windows
-#define STBI_WINDOWS_UTF8
-#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 #include <atomic>

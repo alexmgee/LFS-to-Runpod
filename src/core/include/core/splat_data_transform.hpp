@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include <glm/glm.hpp>
 
 namespace lfs::geometry {
@@ -23,7 +24,7 @@ namespace lfs::core {
      * @param transform_matrix 4x4 transformation matrix
      * @return Reference to the modified splat_data
      */
-    SplatData& transform(SplatData& splat_data, const glm::mat4& transform_matrix);
+    LFS_CORE_API SplatData& transform(SplatData& splat_data, const glm::mat4& transform_matrix);
 
     /**
      * @brief Crop SplatData by a bounding box (creates new filtered copy)
@@ -32,20 +33,20 @@ namespace lfs::core {
      * @param inverse If true, keep points outside the box instead of inside
      * @return New SplatData containing the selected points
      */
-    SplatData crop_by_cropbox(const SplatData& splat_data,
+    LFS_CORE_API SplatData crop_by_cropbox(const SplatData& splat_data,
                               const lfs::geometry::BoundingBox& bounding_box,
                               bool inverse = false);
 
     // Soft crop: mark gaussians as deleted in-place (for undo/redo support)
     // Returns the applied deletion mask
-    Tensor soft_crop_by_cropbox(SplatData& splat_data,
+    LFS_CORE_API Tensor soft_crop_by_cropbox(SplatData& splat_data,
                                 const lfs::geometry::BoundingBox& bounding_box,
                                 bool inverse = false);
 
     // Soft crop by ellipsoid: mark gaussians as deleted if outside ellipsoid
     // transform: world-to-ellipsoid-local transform (combined with node world transform)
     // radii: ellipsoid semi-axes
-    Tensor soft_crop_by_ellipsoid(SplatData& splat_data,
+    LFS_CORE_API Tensor soft_crop_by_ellipsoid(SplatData& splat_data,
                                   const glm::mat4& transform,
                                   const glm::vec3& radii,
                                   bool inverse = false);
@@ -56,7 +57,7 @@ namespace lfs::core {
      * @param num_required_splat Number of splats to keep
      * @param seed Random seed for reproducibility (default: 0)
      */
-    void random_choose(SplatData& splat_data, int num_required_splat, int seed = 0);
+    LFS_CORE_API void random_choose(SplatData& splat_data, int num_required_splat, int seed = 0);
 
     /**
      * @brief Compute the axis-aligned bounding box of SplatData
@@ -67,7 +68,7 @@ namespace lfs::core {
      * @param use_percentile If true, use 1st/99th percentile to exclude outliers (default: false)
      * @return true if bounds were computed successfully, false if splat data is empty/invalid
      */
-    bool compute_bounds(const SplatData& splat_data,
+    LFS_CORE_API bool compute_bounds(const SplatData& splat_data,
                         glm::vec3& min_bounds,
                         glm::vec3& max_bounds,
                         float padding = 0.0f,
@@ -82,13 +83,13 @@ namespace lfs::core {
      * @param use_percentile If true, use 1st/99th percentile to exclude outliers (default: false)
      * @return true if bounds were computed successfully, false if point cloud is empty/invalid
      */
-    bool compute_bounds(const PointCloud& point_cloud,
+    LFS_CORE_API bool compute_bounds(const PointCloud& point_cloud,
                         glm::vec3& min_bounds,
                         glm::vec3& max_bounds,
                         float padding = 0.0f,
                         bool use_percentile = false);
 
     // Extract gaussians where mask is non-zero
-    SplatData extract_by_mask(const SplatData& splat_data, const Tensor& mask);
+    LFS_CORE_API SplatData extract_by_mask(const SplatData& splat_data, const Tensor& mask);
 
 } // namespace lfs::core

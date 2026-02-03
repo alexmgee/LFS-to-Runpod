@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #pragma once
+#include "core/export.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -39,7 +40,7 @@ namespace lfs::core {
         Count = 11
     };
 
-    class Logger {
+    class LFS_LOGGER_API Logger {
     public:
         static Logger& get();
 
@@ -129,7 +130,7 @@ namespace lfs::core {
     };
 
     // Scoped timer for performance measurement
-    class ScopedTimer {
+    class LFS_LOGGER_API ScopedTimer {
     public:
         explicit ScopedTimer(std::string name, LogLevel level = LogLevel::Performance,
                              std::source_location loc = std::source_location::current());

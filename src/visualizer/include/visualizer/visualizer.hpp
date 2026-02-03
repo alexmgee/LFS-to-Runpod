@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "core/export.hpp"
+
 #include <expected>
 #include <filesystem>
 #include <memory>
@@ -15,7 +17,7 @@ namespace lfs::core::param {
 
 namespace lfs::vis {
 
-    struct ViewerOptions {
+    struct LFS_VIS_API ViewerOptions {
         std::string title = "LichtFeld Studio";
         int width = 1280;
         int height = 720;
@@ -28,7 +30,7 @@ namespace lfs::vis {
         int monitor_height = 0;
     };
 
-    class Visualizer {
+    class LFS_VIS_API Visualizer {
     public:
         static std::unique_ptr<Visualizer> create(const ViewerOptions& options = {});
 

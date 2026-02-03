@@ -8,26 +8,25 @@
 // clang-format on
 
 #include "gui/gui_manager.hpp"
-#include "command/command_history.hpp"
 #include "core/cuda_version.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
-#include "core/sogs.hpp"
-#include "core/splat_data_export.hpp"
-#include "gui/dpi_scale.hpp"
+#include "gui/editor/python_editor.hpp"
 #include "gui/html_viewer_export.hpp"
-#include "gui/localization_manager.hpp"
-#include "gui/panels/main_panel.hpp"
-#include "gui/panels/scene_panel.hpp"
+#include "core/event_bridge/localization_manager.hpp"
+#include "gui/panels/python_console_panel.hpp"
 #include "gui/panels/tools_panel.hpp"
-#include "gui/panels/training_panel.hpp"
+#include "gui/panels/windows_console_utils.hpp"
 #include "gui/string_keys.hpp"
 #include "gui/ui_widgets.hpp"
 #include "gui/utils/windows_utils.hpp"
 #include "gui/windows/file_browser.hpp"
 #include "io/exporter.hpp"
 #include "io/loader.hpp"
+#include "io/video/video_encoder.hpp"
+#include "io/video_frame_extractor.hpp"
+#include "sequencer/keyframe.hpp"
 #include <implot.h>
 
 #include "input/input_controller.hpp"
@@ -38,6 +37,11 @@
 #include "core/events.hpp"
 #include "core/parameters.hpp"
 #include "core/services.hpp"
+#include "operator/operator_id.hpp"
+#include "operator/operator_registry.hpp"
+#include "python/package_manager.hpp"
+#include "python/python_runtime.hpp"
+#include "python/ui_hooks.hpp"
 #include "rendering/rendering.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene.hpp"
@@ -45,6 +49,7 @@
 #include "theme/theme.hpp"
 #include "tools/brush_tool.hpp"
 #include "tools/selection_tool.hpp"
+#include "tools/unified_tool_registry.hpp"
 #include "training/training_state.hpp"
 #include "visualizer_impl.hpp"
 #include <cuda_runtime.h>
@@ -52,6 +57,7 @@
 #include "git_version.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <chrono>
 #include <cmath>
@@ -68,6 +74,9 @@ namespace lfs::vis::gui {
     // Import commonly used types
     using ToolType = lfs::vis::ToolType;
     using ExportFormat = lfs::core::ExportFormat;
+
+    // Layout constants
+    constexpr float STATUS_BAR_HEIGHT = 22.0f;
 
     constexpr float GIZMO_AXIS_LIMIT = 0.0001f;
     constexpr float MIN_GIZMO_SCALE = 0.001f;
@@ -121,14 +130,47 @@ namespace lfs::vis::gui {
 
         // Create components
         file_browser_ = std::make_unique<FileBrowser>();
-        scene_panel_ = std::make_unique<ScenePanel>(viewer->trainer_manager_);
         menu_bar_ = std::make_unique<MenuBar>();
-        export_dialog_ = std::make_unique<ExportDialog>();
-        notification_popup_ = std::make_unique<NotificationPopup>();
-        save_directory_popup_ = std::make_unique<SaveDirectoryPopup>();
-        resume_checkpoint_popup_ = std::make_unique<ResumeCheckpointPopup>();
-        exit_confirmation_popup_ = std::make_unique<ExitConfirmationPopup>();
+        sequencer_panel_ = std::make_unique<SequencerPanel>(sequencer_controller_);
         disk_space_error_dialog_ = std::make_unique<DiskSpaceErrorDialog>();
+        video_extractor_dialog_ = std::make_unique<lfs::gui::VideoExtractorDialog>();
+
+        // Wire up video extractor dialog callback
+        video_extractor_dialog_->setOnStartExtraction([this](const lfs::gui::VideoExtractionParams& params) {
+            auto* dialog = video_extractor_dialog_.get();
+            std::thread([params, dialog]() {
+                lfs::io::VideoFrameExtractor extractor;
+
+                lfs::io::VideoFrameExtractor::Params extract_params;
+                extract_params.video_path = params.video_path;
+                extract_params.output_dir = params.output_dir;
+                extract_params.mode = params.mode;
+                extract_params.fps = params.fps;
+                extract_params.frame_interval = params.frame_interval;
+                extract_params.format = params.format;
+                extract_params.jpg_quality = params.jpg_quality;
+                extract_params.start_time = params.start_time;
+                extract_params.end_time = params.end_time;
+                extract_params.resolution_mode = params.resolution_mode;
+                extract_params.scale = params.scale;
+                extract_params.custom_width = params.custom_width;
+                extract_params.custom_height = params.custom_height;
+                extract_params.filename_pattern = params.filename_pattern;
+
+                extract_params.progress_callback = [dialog](int current, int total) {
+                    dialog->updateProgress(current, total);
+                };
+
+                std::string error;
+                if (!extractor.extract(extract_params, error)) {
+                    LOG_ERROR("Video frame extraction failed: {}", error);
+                    dialog->setExtractionError(error);
+                } else {
+                    LOG_INFO("Video frame extraction completed successfully");
+                    dialog->setExtractionComplete();
+                }
+            }).detach();
+        });
 
         // Initialize window states
         window_states_["file_browser"] = false;
@@ -136,10 +178,8 @@ namespace lfs::vis::gui {
         window_states_["system_console"] = false;
         window_states_["training_tab"] = false;
         window_states_["export_dialog"] = false;
-
-        // Initialize speed overlay state
-        speed_overlay_visible_ = false;
-        speed_overlay_duration_ = std::chrono::milliseconds(3000); // 3 seconds
+        window_states_["python_console"] = false;
+        window_states_["video_extractor_dialog"] = false;
 
         // Initialize focus state
         viewport_has_focus_ = false;
@@ -175,130 +215,18 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::initMenuBar() {
-        menu_bar_->setOnImportDataset([this]() {
-            const auto path = OpenDatasetFolderDialogNative();
-            if (!path.empty() && std::filesystem::is_directory(path)) {
-                save_directory_popup_->show(path);
-            }
+        menu_bar_->setOnShowPythonConsole([this]() {
+            window_states_["python_console"] = !window_states_["python_console"];
         });
+    }
 
-        menu_bar_->setOnImportPLY([this]() {
-            const auto path = OpenPlyFileDialogNative();
-            if (!path.empty()) {
-                lfs::core::events::cmd::LoadFile{.path = path, .is_dataset = false}.emit();
-            }
-        });
-
-        menu_bar_->setOnImportCheckpoint([this]() {
-            const auto path = OpenCheckpointFileDialog();
-            if (!path.empty()) {
-                resume_checkpoint_popup_->show(path);
-            }
-        });
-
-        menu_bar_->setOnImportConfig([]() {
-            const auto path = OpenJsonFileDialog();
-            if (!path.empty()) {
-                lfs::core::events::cmd::LoadConfigFile{.path = path}.emit();
-            }
-        });
-
-        menu_bar_->setOnExport([this]() {
-            window_states_["export_dialog"] = true;
-        });
-
-        menu_bar_->setOnExportConfig([]() {
-            const auto* const param_manager = services().paramsOrNull();
-            if (!param_manager)
-                return;
-
-            const auto path = SaveJsonFileDialog("training_config");
-            if (path.empty())
-                return;
-
-            lfs::core::param::TrainingParameters params;
-            params.dataset = param_manager->getDatasetConfig();
-            params.optimization = param_manager->getActiveParams();
-
-            if (const auto result = lfs::core::param::save_training_parameters_to_json(params, path); !result) {
-                LOG_ERROR("Failed to export config: {}", result.error());
-            }
-        });
-
-        // Export dialog: when user clicks Export, show native file dialog and perform export
-        export_dialog_->setOnBrowse([this](ExportFormat format,
-                                           const std::string& default_name,
-                                           const std::vector<std::string>& node_names,
-                                           int sh_degree) {
-            if (isExporting())
-                return;
-
-            // Show native file dialog based on format
-            std::filesystem::path path;
-            switch (format) {
-            case ExportFormat::PLY:
-                path = SavePlyFileDialog(default_name);
-                break;
-            case ExportFormat::SOG:
-                path = SaveSogFileDialog(default_name);
-                break;
-            case ExportFormat::SPZ:
-                path = SaveSpzFileDialog(default_name);
-                break;
-            case ExportFormat::HTML_VIEWER:
-                path = SaveHtmlFileDialog(default_name);
-                break;
-            }
-
-            if (path.empty())
-                return;
-
-            // Perform the export
-            auto* const scene_manager = viewer_->getSceneManager();
-            if (!scene_manager || node_names.empty())
-                return;
-
-            // Collect splats with transforms for selected nodes
-            const auto& scene = scene_manager->getScene();
-            std::vector<std::pair<const lfs::core::SplatData*, glm::mat4>> splats;
-            for (const auto& name : node_names) {
-                const auto* node = scene.getNode(name);
-                if (node && node->type == NodeType::SPLAT && node->model) {
-                    splats.emplace_back(node->model.get(), scene.getWorldTransform(node->id));
-                }
-            }
-
-            if (splats.empty())
-                return;
-
-            // Merge selected splats
-            auto merged = Scene::mergeSplatsWithTransforms(splats);
-            if (!merged)
-                return;
-
-            // Truncate SH data if needed
-            if (sh_degree < merged->get_max_sh_degree()) {
-                truncateSHDegree(*merged, sh_degree);
-            }
-
-            // Start async export
-            startAsyncExport(format, path, std::move(merged));
-        });
-
-        menu_bar_->setOnExit([this]() {
-            requestExitConfirmation();
-        });
-
-        menu_bar_->setOnNewProject([this]() {
-            lfs::core::events::cmd::ClearScene{}.emit();
-        });
-
-        menu_bar_->setCanClearCheck([this]() {
-            auto* trainer_mgr = viewer_->getTrainerManager();
-            if (!trainer_mgr)
-                return true;
-            return trainer_mgr->canPerform(TrainingAction::ClearScene);
-        });
+    FontSet GuiManager::buildFontSet() const {
+        FontSet fs{font_regular_, font_bold_, font_heading_, font_small_, font_section_, font_monospace_};
+        for (int i = 0; i < FontSet::MONO_SIZE_COUNT; ++i) {
+            fs.monospace_sized[i] = mono_fonts_[i];
+            fs.monospace_sizes[i] = mono_font_scales_[i];
+        }
+        return fs;
     }
 
     void GuiManager::init() {
@@ -306,6 +234,71 @@ namespace lfs::vis::gui {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImPlot::CreateContext();
+
+        // Share ImGui state with Python module across DLL boundaries
+        ImGuiContext* const ctx = ImGui::GetCurrentContext();
+        lfs::python::set_imgui_context(ctx);
+
+        ImGuiMemAllocFunc alloc_fn{};
+        ImGuiMemFreeFunc free_fn{};
+        void* alloc_user_data{};
+        ImGui::GetAllocatorFunctions(&alloc_fn, &free_fn, &alloc_user_data);
+        lfs::python::set_imgui_allocator_functions(
+            reinterpret_cast<void*>(alloc_fn),
+            reinterpret_cast<void*>(free_fn),
+            alloc_user_data);
+        lfs::python::set_implot_context(ImPlot::GetCurrentContext());
+
+        lfs::python::set_gl_texture_service(
+            [](const unsigned char* data, const int w, const int h, const int channels) -> lfs::python::TextureResult {
+                if (!data || w <= 0 || h <= 0)
+                    return {0, 0, 0};
+
+                GLuint tex = 0;
+                glGenTextures(1, &tex);
+                if (tex == 0)
+                    return {0, 0, 0};
+
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+                GLenum format = GL_RGB;
+                GLenum internal_format = GL_RGB8;
+                if (channels == 1) {
+                    format = GL_RED;
+                    internal_format = GL_R8;
+                } else if (channels == 4) {
+                    format = GL_RGBA;
+                    internal_format = GL_RGBA8;
+                }
+
+                glTexImage2D(GL_TEXTURE_2D, 0, internal_format, w, h, 0, format, GL_UNSIGNED_BYTE, data);
+
+                if (channels == 1) {
+                    GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
+                    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+                }
+
+                glBindTexture(GL_TEXTURE_2D, 0);
+                return {tex, w, h};
+            },
+            [](const uint32_t tex) {
+                if (tex > 0) {
+                    const auto gl_tex = static_cast<GLuint>(tex);
+                    glDeleteTextures(1, &gl_tex);
+                }
+            },
+            []() -> int {
+                constexpr int FALLBACK_MAX_TEXTURE_SIZE = 4096;
+                GLint sz = 0;
+                glGetIntegerv(GL_MAX_TEXTURE_SIZE, &sz);
+                return sz > 0 ? sz : FALLBACK_MAX_TEXTURE_SIZE;
+            });
+
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -317,7 +310,7 @@ namespace lfs::vis::gui {
         ImGui_ImplOpenGL3_Init("#version 430");
 
         // Initialize localization system
-        auto& loc = lichtfeld::LocalizationManager::getInstance();
+        auto& loc = lfs::event::LocalizationManager::getInstance();
         const std::string locale_path = lfs::core::path_to_utf8(lfs::core::getLocalesDir());
         if (!loc.initialize(locale_path)) {
             LOG_WARN("Failed to initialize localization system, using default strings");
@@ -333,7 +326,7 @@ namespace lfs::vis::gui {
         xscale = std::clamp(xscale, 1.0f, 4.0f);
 
         // Store DPI scale for use by UI components
-        setDpiScale(xscale);
+        lfs::python::set_shared_dpi_scale(xscale);
 
         // Set application icon - use the resource path helper
         try {
@@ -408,6 +401,45 @@ namespace lfs::vis::gui {
             font_small_ = load_font_with_cjk(regular_path, t.fonts.small_size * xscale);
             font_section_ = load_font_with_cjk(bold_path, t.fonts.section_size * xscale);
 
+            // Monospace font at multiple sizes for crisp scaling
+            const auto monospace_path = lfs::vis::getAssetPath("fonts/JetBrainsMono-Regular.ttf");
+            if (is_font_valid(monospace_path)) {
+                const std::string mono_path_utf8 = lfs::core::path_to_utf8(monospace_path);
+
+                static constexpr ImWchar GLYPH_RANGES[] = {
+                    0x0020,
+                    0x00FF, // Basic Latin + Latin Supplement
+                    0x2190,
+                    0x21FF, // Arrows
+                    0x2500,
+                    0x257F, // Box Drawing
+                    0x2580,
+                    0x259F, // Block Elements
+                    0x25A0,
+                    0x25FF, // Geometric Shapes
+                    0,
+                };
+
+                static constexpr float MONO_SCALES[] = {0.7f, 1.0f, 1.3f, 1.7f, 2.2f};
+                static_assert(std::size(MONO_SCALES) == FontSet::MONO_SIZE_COUNT);
+
+                for (int i = 0; i < FontSet::MONO_SIZE_COUNT; ++i) {
+                    ImFontConfig config;
+                    config.GlyphRanges = GLYPH_RANGES;
+                    const float size = t.fonts.base_size * xscale * MONO_SCALES[i];
+                    mono_fonts_[i] = io.Fonts->AddFontFromFileTTF(mono_path_utf8.c_str(), size, &config);
+                    mono_font_scales_[i] = MONO_SCALES[i];
+                }
+                font_monospace_ = mono_fonts_[1];
+                if (font_monospace_) {
+                    LOG_INFO("Loaded monospace font: JetBrainsMono-Regular.ttf ({} sizes)", FontSet::MONO_SIZE_COUNT);
+                }
+            }
+            if (!font_monospace_) {
+                font_monospace_ = font_regular_;
+                LOG_WARN("Monospace font not found, using regular font for code editor");
+            }
+
             const bool all_loaded = font_regular_ && font_bold_ && font_heading_ && font_small_ && font_section_;
             if (!all_loaded) {
                 LOG_WARN("Some fonts failed to load, using fallback");
@@ -437,51 +469,17 @@ namespace lfs::vis::gui {
             font_regular_ = font_bold_ = font_heading_ = font_small_ = font_section_ = fallback;
         }
 
-        save_directory_popup_->setOnConfirm([this](const DatasetLoadParams& load_params) {
-            if (const auto result = services().params().ensureLoaded(); !result) {
-                LOG_ERROR("Failed to load parameter files: {}", result.error());
-                return;
-            }
-            services().params().resetToDefaults();
-            auto params = services().params().createForDataset(load_params.dataset_path, load_params.output_path);
-            if (load_params.init_path) {
-                params.init_path = lfs::core::path_to_utf8(*load_params.init_path);
-            }
-            viewer_->setParameters(params);
-            lfs::core::events::cmd::LoadFile{.path = load_params.dataset_path, .is_dataset = true}.emit();
-        });
-
-        resume_checkpoint_popup_->setOnConfirm([](const CheckpointLoadParams& params) {
-            lfs::core::events::cmd::LoadCheckpointForTraining{
-                .checkpoint_path = params.checkpoint_path,
-                .dataset_path = params.dataset_path,
-                .output_path = params.output_path}
-                .emit();
-        });
-
-        lfs::core::events::cmd::ShowResumeCheckpointPopup::when([this](const auto& e) {
-            resume_checkpoint_popup_->show(e.checkpoint_path);
-        });
-
         setFileSelectedCallback([this](const std::filesystem::path& path, const bool is_dataset) {
             window_states_["file_browser"] = false;
             if (is_dataset) {
-                save_directory_popup_->show(path);
+                lfs::core::events::cmd::ShowDatasetLoadPopup{.dataset_path = path}.emit();
             } else {
                 lfs::core::events::cmd::LoadFile{.path = path, .is_dataset = false}.emit();
             }
         });
 
-        scene_panel_->setOnDatasetLoad([this](const std::filesystem::path& path) {
-            if (path.empty()) {
-                window_states_["file_browser"] = true;
-            } else {
-                save_directory_popup_->show(path);
-            }
-        });
-
         initMenuBar();
-        menu_bar_->setFonts({font_regular_, font_bold_, font_heading_, font_small_, font_section_});
+        menu_bar_->setFonts(buildFontSet());
 
         // Load startup overlay textures
         const auto loadOverlayTexture = [](const std::filesystem::path& path, unsigned int& tex, int& w, int& h) {
@@ -527,7 +525,6 @@ namespace lfs::vis::gui {
 
     void GuiManager::shutdown() {
         drag_drop_.shutdown();
-        panels::ShutdownGizmoToolbar(gizmo_toolbar_state_);
 
         if (startup_logo_light_texture_)
             glDeleteTextures(1, &startup_logo_light_texture_);
@@ -560,8 +557,18 @@ namespace lfs::vis::gui {
 
         ImGui::NewFrame();
 
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+            ImGui::ClearActiveID();
+            if (auto* editor = panels::PythonConsoleState::getInstance().getEditor()) {
+                editor->unfocus();
+            }
+        }
+
         // Check for async import completion (must happen on main thread)
         checkAsyncImportCompletion();
+
+        // Poll UV package manager for async operations
+        python::PackageManager::instance().poll();
 
         // Hot-reload themes (check once per second)
         {
@@ -577,29 +584,38 @@ namespace lfs::vis::gui {
         ImGuizmo::BeginFrame();
 
         if (menu_bar_ && !ui_hidden_) {
-            // Lazily connect input bindings (input controller may not be ready during init)
-            if (!menu_bar_input_bindings_set_) {
-                if (auto* input_controller = viewer_->getInputController()) {
-                    menu_bar_->setInputBindings(&input_controller->getBindings());
-                    menu_bar_input_bindings_set_ = true;
-                }
-            }
             menu_bar_->render();
         }
 
+        // Check for popups/modals and text input state - used to prevent input overrides
+        // when UI elements like popups or text fields should receive input
+        const bool any_popup_or_modal_open = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        const bool imgui_wants_input = ImGui::GetIO().WantTextInput || ImGui::GetIO().WantCaptureKeyboard;
+
         // Override ImGui's mouse capture for gizmo interaction
         // If ImGuizmo is being used or hovered, let it handle the mouse
-        if (ImGuizmo::IsOver() || ImGuizmo::IsUsing()) {
+        // But not if a popup/modal is open - those should take priority for input
+        if ((ImGuizmo::IsOver() || ImGuizmo::IsUsing()) && !any_popup_or_modal_open) {
             ImGui::GetIO().WantCaptureMouse = false;
             ImGui::GetIO().WantCaptureKeyboard = false;
         }
 
         // Override ImGui's mouse capture for right/middle buttons when in viewport
         // This ensures that camera controls work properly
-        if (mouse_in_viewport && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+        // Skip if any popup/modal is open or ImGui wants text input (e.g., input fields are focused)
+        if (mouse_in_viewport && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) &&
+            !any_popup_or_modal_open && !imgui_wants_input) {
             if (ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
                 ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
                 ImGui::GetIO().WantCaptureMouse = false;
+            }
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+                ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                ImGui::ClearActiveID();
+                ImGui::GetIO().WantCaptureKeyboard = false;
+                if (auto* editor = panels::PythonConsoleState::getInstance().getEditor()) {
+                    editor->unfocus();
+                }
             }
         }
 
@@ -608,7 +624,8 @@ namespace lfs::vis::gui {
         if (rendering_manager) {
             const auto& settings = rendering_manager->getSettings();
             if (settings.point_cloud_mode && mouse_in_viewport &&
-                !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+                !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) &&
+                !any_popup_or_modal_open && !imgui_wants_input) {
                 ImGui::GetIO().WantCaptureMouse = false;
                 ImGui::GetIO().WantCaptureKeyboard = false;
             }
@@ -655,20 +672,52 @@ namespace lfs::vis::gui {
             .file_browser = file_browser_.get(),
             .window_states = &window_states_,
             .editor = &editor_ctx,
-            .fonts = {font_regular_, font_bold_, font_heading_, font_small_, font_section_}};
+            .sequencer_controller = &sequencer_controller_,
+            .fonts = buildFontSet()};
 
-        // Right panel
+        // Right panel and docked Python console
         if (show_main_panel_ && !ui_hidden_) {
             const auto* const vp = ImGui::GetMainViewport();
             const float panel_h = vp->WorkSize.y - STATUS_BAR_HEIGHT;
             const float min_w = vp->WorkSize.x * RIGHT_PANEL_MIN_RATIO;
             const float max_w = vp->WorkSize.x * RIGHT_PANEL_MAX_RATIO;
+            constexpr float PANEL_GAP = 2.0f;
 
             // on windows, when window is minimized, WorkSize can be zero
             if (min_w != 0 || max_w != 0)
                 right_panel_width_ = std::clamp(right_panel_width_, min_w, max_w);
 
-            const float panel_x = vp->WorkPos.x + vp->WorkSize.x - right_panel_width_;
+            // Calculate available space for viewport + Python console
+            const bool python_console_visible = window_states_["python_console"];
+            const float available_for_split = vp->WorkSize.x - right_panel_width_ - PANEL_GAP;
+
+            // Initialize Python console width to 1:1 split if not set or too small
+            if (python_console_visible && python_console_width_ < 0.0f) {
+                // First time opening: 1:1 split
+                python_console_width_ = (available_for_split - PANEL_GAP) / 2.0f;
+            }
+
+            // Clamp Python console width
+            if (python_console_visible) {
+                const float max_console_w = available_for_split - PYTHON_CONSOLE_MIN_WIDTH;
+                python_console_width_ = std::clamp(python_console_width_, PYTHON_CONSOLE_MIN_WIDTH, max_console_w);
+            }
+
+            // Right panel position
+            const float right_panel_x = vp->WorkPos.x + vp->WorkSize.x - right_panel_width_;
+
+            // Python console position (between viewport and right panel)
+            const float console_x = right_panel_x - (python_console_visible ? python_console_width_ + PANEL_GAP : 0.0f);
+
+            // Render docked Python console
+            if (python_console_visible) {
+                renderDockedPythonConsole(ctx, console_x, panel_h);
+            } else {
+                python_console_hovering_edge_ = false;
+                python_console_resizing_ = false;
+            }
+
+            const float panel_x = right_panel_x;
             ImGui::SetNextWindowPos({panel_x, vp->WorkPos.y}, ImGuiCond_Always);
             ImGui::SetNextWindowSize({right_panel_width_, panel_h}, ImGuiCond_Always);
 
@@ -701,76 +750,58 @@ namespace lfs::vis::gui {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 
             if (ImGui::Begin("##RightPanel", nullptr, PANEL_FLAGS)) {
-                const float avail_h = ImGui::GetContentRegionAvail().y;
-                const float scale = getDpiScale();
-                const float SPLITTER_H = 6.0f * scale, MIN_H = 80.0f * scale;
-
-                // Scene panel
-                const float scene_h = std::max(MIN_H, avail_h * scene_panel_ratio_ - SPLITTER_H * 0.5f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, {0, 0, 0, 0});
+                auto* const sm = ctx.viewer->getSceneManager();
+                lfs::vis::Scene* scene = sm ? &sm->getScene() : nullptr;
+
+                const float avail_h = ImGui::GetContentRegionAvail().y;
+                const float dpi = lfs::python::get_shared_dpi_scale();
+                constexpr float SPLITTER_H = 6.0f;
+                constexpr float MIN_H = 80.0f;
+                const float splitter_h = SPLITTER_H * dpi;
+                const float min_h = MIN_H * dpi;
+
+                // Scene panel (top section)
+                const float scene_h = std::max(min_h, avail_h * scene_panel_ratio_ - splitter_h * 0.5f);
                 if (ImGui::BeginChild("##ScenePanel", {0, scene_h}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
-                    widgets::SectionHeader(LOC(lichtfeld::Strings::Window::SCENE), ctx.fonts);
-                    scene_panel_->renderContent(&ctx);
+                    python::draw_python_panels(python::PanelSpace::SceneHeader, scene);
                 }
                 ImGui::EndChild();
-                ImGui::PopStyleColor();
 
                 // Splitter
+                const auto& t = vis::theme();
                 ImGui::PushStyleColor(ImGuiCol_Button, withAlpha(t.palette.border, 0.4f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, withAlpha(t.palette.info, 0.6f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, withAlpha(t.palette.info, 0.8f));
-                ImGui::Button("##Splitter", {-1, SPLITTER_H});
-                if (ImGui::IsItemActive())
+                ImGui::Button("##SceneSplitter", {-1, splitter_h});
+                if (ImGui::IsItemActive()) {
                     scene_panel_ratio_ = std::clamp(scene_panel_ratio_ + ImGui::GetIO().MouseDelta.y / avail_h, 0.15f, 0.85f);
-                if (ImGui::IsItemHovered())
+                }
+                if (ImGui::IsItemHovered()) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                }
                 ImGui::PopStyleColor(3);
 
-                // Rendering content helper
-                const auto draw_rendering = [&ctx] {
-                    panels::DrawRenderingSettings(ctx);
-                    ImGui::Separator();
-                    panels::DrawSelectionGroups(ctx);
-                    ImGui::Separator();
-                    panels::DrawToolsPanel(ctx);
-                    panels::DrawSystemConsoleButton(ctx);
-                };
-
-                // Rendering panel
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, {0, 0, 0, 0});
-                if (viewer_->getTrainer()) {
-                    if (ImGui::BeginTabBar("##BottomTabs")) {
-                        if (ImGui::BeginTabItem(LOC(lichtfeld::Strings::Window::RENDERING))) {
-                            if (ImGui::BeginChild("##RenderingPanel", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
-                                draw_rendering();
+                // Main panel tabs (bottom section)
+                const auto main_tabs = python::get_main_panel_tabs();
+                if (ImGui::BeginTabBar("##MainPanelTabs")) {
+                    for (const auto& tab : main_tabs) {
+                        ImGuiTabItemFlags flags = ImGuiTabItemFlags_None;
+                        if (focus_panel_name_ == tab.label || focus_panel_name_ == tab.idname) {
+                            flags = ImGuiTabItemFlags_SetSelected;
+                            focus_panel_name_.clear();
+                        }
+                        const std::string tab_label = tab.label + "##" + tab.idname;
+                        if (ImGui::BeginTabItem(tab_label.c_str(), nullptr, flags)) {
+                            const std::string child_id = "##" + tab.idname + "Panel";
+                            if (ImGui::BeginChild(child_id.c_str(), {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
+                                python::draw_main_panel_tab(tab.idname, scene);
                             }
                             ImGui::EndChild();
                             ImGui::EndTabItem();
                         }
-                        const ImGuiTabItemFlags flags = focus_training_panel_
-                                                            ? ImGuiTabItemFlags_SetSelected
-                                                            : ImGuiTabItemFlags_None;
-                        if (focus_training_panel_)
-                            focus_training_panel_ = false;
-                        if (ImGui::BeginTabItem(LOC(lichtfeld::Strings::Window::TRAINING), nullptr, flags)) {
-                            panels::DrawTrainingControls(ctx);
-                            if (ImGui::BeginChild("##TrainingPanel", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
-                                panels::DrawTrainingParams(ctx);
-                                panels::DrawTrainingStatus(ctx);
-                                ImGui::Separator();
-                                panels::DrawProgressInfo(ctx);
-                            }
-                            ImGui::EndChild();
-                            ImGui::EndTabItem();
-                        }
-                        ImGui::EndTabBar();
                     }
-                } else {
-                    widgets::SectionHeader(LOC(lichtfeld::Strings::Window::RENDERING), ctx.fonts);
-                    if (ImGui::BeginChild("##RenderingPanel", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
-                        draw_rendering();
-                    }
-                    ImGui::EndChild();
+                    ImGui::EndTabBar();
                 }
                 ImGui::PopStyleColor();
             }
@@ -780,6 +811,8 @@ namespace lfs::vis::gui {
         } else {
             hovering_panel_edge_ = false;
             resizing_panel_ = false;
+            python_console_hovering_edge_ = false;
+            python_console_resizing_ = false;
         }
 
         // Render floating windows
@@ -787,47 +820,55 @@ namespace lfs::vis::gui {
             file_browser_->render(&window_states_["file_browser"]);
         }
 
-        // Export dialog
-        if (window_states_["export_dialog"]) {
-            export_dialog_->render(&window_states_["export_dialog"], viewer_->getSceneManager());
+        // Video extractor dialog
+        if (window_states_["video_extractor_dialog"]) {
+            video_extractor_dialog_->render(&window_states_["video_extractor_dialog"]);
         }
 
-        // Utility toolbar (always visible)
-        const bool is_fullscreen = viewer_->getWindowManager() && viewer_->getWindowManager()->isFullscreen();
-        panels::DrawUtilityToolbar(gizmo_toolbar_state_, viewport_pos_, viewport_size_, ui_hidden_, is_fullscreen,
-                                   viewer_->getRenderingManager(), &viewer_->getViewport());
+        python::set_viewport_bounds(viewport_pos_.x, viewport_pos_.y, viewport_size_.x, viewport_size_.y);
+        renderPythonPanels(ctx);
 
-        // Gizmo toolbar (only when node selected and UI visible)
+        // Tool state updates (only when node selected and UI visible)
         auto* const scene_manager = ctx.viewer->getSceneManager();
         if (scene_manager && scene_manager->hasSelectedNode() && !ui_hidden_) {
-            panels::DrawGizmoToolbar(ctx, gizmo_toolbar_state_, viewport_pos_, viewport_size_);
+            const auto& active_tool_id = UnifiedToolRegistry::instance().getActiveTool();
+            const auto& gizmo_type = ctx.editor->getGizmoType();
 
-            // Get current tool from EditorContext (single source of truth)
-            const auto current_tool = ctx.editor->getActiveTool();
-            const bool is_transform_tool = (current_tool == ToolType::Translate ||
-                                            current_tool == ToolType::Rotate ||
-                                            current_tool == ToolType::Scale);
-            show_node_gizmo_ = is_transform_tool;
-            if (is_transform_tool) {
-                node_gizmo_operation_ = gizmo_toolbar_state_.current_operation;
+            bool is_transform_tool = false;
+            if (!gizmo_type.empty()) {
+                is_transform_tool = true;
+                if (gizmo_type == "translate") {
+                    node_gizmo_operation_ = ImGuizmo::TRANSLATE;
+                    current_operation_ = ImGuizmo::TRANSLATE;
+                } else if (gizmo_type == "rotate") {
+                    node_gizmo_operation_ = ImGuizmo::ROTATE;
+                    current_operation_ = ImGuizmo::ROTATE;
+                } else if (gizmo_type == "scale") {
+                    node_gizmo_operation_ = ImGuizmo::SCALE;
+                    current_operation_ = ImGuizmo::SCALE;
+                } else {
+                    is_transform_tool = false;
+                }
+            } else if (active_tool_id == "builtin.translate" || active_tool_id == "builtin.rotate" ||
+                       active_tool_id == "builtin.scale") {
+                is_transform_tool = true;
+                node_gizmo_operation_ = current_operation_;
             }
+            show_node_gizmo_ = is_transform_tool;
 
-            auto* brush_tool = ctx.viewer->getBrushTool();
-            auto* align_tool = ctx.viewer->getAlignTool();
-            auto* selection_tool = ctx.viewer->getSelectionTool();
-            const bool is_brush_mode = (current_tool == ToolType::Brush);
-            const bool is_align_mode = (current_tool == ToolType::Align);
-            const bool is_selection_mode = (current_tool == ToolType::Selection);
+            auto* const brush_tool = ctx.viewer->getBrushTool();
+            auto* const align_tool = ctx.viewer->getAlignTool();
+            auto* const selection_tool = ctx.viewer->getSelectionTool();
+            const bool is_brush_mode = (active_tool_id == "builtin.brush");
+            const bool is_align_mode = (active_tool_id == "builtin.align");
+            const bool is_selection_mode = (active_tool_id == "builtin.select");
 
-            // Materialize deletions when switching away from selection tool
-            const bool was_selection_mode = (previous_tool_ == ToolType::Selection);
-            if (was_selection_mode && current_tool != previous_tool_) {
-                if (auto* sm = ctx.viewer->getSceneManager()) {
+            if (previous_tool_id_ == "builtin.select" && active_tool_id != previous_tool_id_) {
+                if (auto* const sm = ctx.viewer->getSceneManager()) {
                     sm->applyDeleted();
                 }
             }
-
-            previous_tool_ = current_tool;
+            previous_tool_id_ = active_tool_id;
 
             if (brush_tool)
                 brush_tool->setEnabled(is_brush_mode);
@@ -836,59 +877,193 @@ namespace lfs::vis::gui {
             if (selection_tool)
                 selection_tool->setEnabled(is_selection_mode);
 
-            // Update selection mode and auto-toggle ring rendering
             if (is_selection_mode) {
-                if (auto* rm = ctx.viewer->getRenderingManager()) {
-                    lfs::rendering::SelectionMode mode = lfs::rendering::SelectionMode::Centers;
-                    switch (gizmo_toolbar_state_.selection_mode) {
-                    case panels::SelectionSubMode::Centers: mode = lfs::rendering::SelectionMode::Centers; break;
-                    case panels::SelectionSubMode::Rectangle: mode = lfs::rendering::SelectionMode::Rectangle; break;
-                    case panels::SelectionSubMode::Polygon: mode = lfs::rendering::SelectionMode::Polygon; break;
-                    case panels::SelectionSubMode::Lasso: mode = lfs::rendering::SelectionMode::Lasso; break;
-                    case panels::SelectionSubMode::Rings: mode = lfs::rendering::SelectionMode::Rings; break;
+                if (auto* const rm = ctx.viewer->getRenderingManager()) {
+                    auto mode = lfs::rendering::SelectionMode::Centers;
+                    switch (selection_mode_) {
+                    case SelectionSubMode::Centers: mode = lfs::rendering::SelectionMode::Centers; break;
+                    case SelectionSubMode::Rectangle: mode = lfs::rendering::SelectionMode::Rectangle; break;
+                    case SelectionSubMode::Polygon: mode = lfs::rendering::SelectionMode::Polygon; break;
+                    case SelectionSubMode::Lasso: mode = lfs::rendering::SelectionMode::Lasso; break;
+                    case SelectionSubMode::Rings: mode = lfs::rendering::SelectionMode::Rings; break;
                     }
                     rm->setSelectionMode(mode);
 
-                    // Reset selection state when switching modes
-                    if (gizmo_toolbar_state_.selection_mode != previous_selection_mode_) {
+                    if (selection_mode_ != previous_selection_mode_) {
                         if (selection_tool)
                             selection_tool->onSelectionModeChanged();
 
-                        // Auto-enable rings when switching to Rings sub-mode
-                        if (gizmo_toolbar_state_.selection_mode == panels::SelectionSubMode::Rings) {
+                        if (selection_mode_ == SelectionSubMode::Rings) {
                             auto settings = rm->getSettings();
                             settings.show_rings = true;
                             settings.show_center_markers = false;
                             rm->updateSettings(settings);
                         }
-
-                        previous_selection_mode_ = gizmo_toolbar_state_.selection_mode;
+                        previous_selection_mode_ = selection_mode_;
                     }
                 }
             }
 
         } else {
             show_node_gizmo_ = false;
-            auto* brush_tool = ctx.viewer->getBrushTool();
-            auto* align_tool = ctx.viewer->getAlignTool();
-            if (brush_tool)
-                brush_tool->setEnabled(false);
-            if (align_tool)
-                align_tool->setEnabled(false);
+            if (auto* const tool = ctx.viewer->getBrushTool())
+                tool->setEnabled(false);
+            if (auto* const tool = ctx.viewer->getAlignTool())
+                tool->setEnabled(false);
+            if (auto* const tool = ctx.viewer->getSelectionTool())
+                tool->setEnabled(false);
         }
 
-        auto* brush_tool = ctx.viewer->getBrushTool();
-        if (brush_tool && brush_tool->isEnabled() && !ui_hidden_) {
-            brush_tool->renderUI(ctx, nullptr);
+        if (auto* const tool = ctx.viewer->getBrushTool(); tool && tool->isEnabled() && !ui_hidden_) {
+            tool->renderUI(ctx, nullptr);
+        }
+        if (auto* const tool = ctx.viewer->getSelectionTool(); tool && tool->isEnabled() && !ui_hidden_) {
+            tool->renderUI(ctx, nullptr);
         }
 
-        auto* selection_tool = ctx.viewer->getSelectionTool();
-        if (selection_tool && selection_tool->isEnabled() && !ui_hidden_) {
-            selection_tool->renderUI(ctx, nullptr);
+        // Selection tool overlays - only draw when mouse is in viewport (not over UI)
+        const bool mouse_over_ui = ImGui::GetIO().WantCaptureMouse;
+        if (!ui_hidden_ && !mouse_over_ui && viewport_size_.x > 0 && viewport_size_.y > 0) {
+            auto* rm = ctx.viewer->getRenderingManager();
+            auto* draw_list = ImGui::GetForegroundDrawList();
 
-            // Mini-toolbar for gizmo operation when crop box is selected
-            if (selection_tool->isCropBoxSelected()) {
-                renderCropGizmoMiniToolbar(ctx);
+            // Brush circle
+            if (rm && rm->isBrushActive()) {
+                const auto& t = theme();
+
+                // Get brush state from rendering manager
+                float bx, by, br;
+                bool add_mode;
+                rm->getBrushState(bx, by, br, add_mode);
+
+                // Convert from render coordinates to screen coordinates
+                // Brush state is in render coords: render = (screen - viewport) * render_scale
+                // So: screen = render / render_scale + viewport
+                const float render_scale = rm->getSettings().render_scale;
+                const ImVec2 screen_pos(viewport_pos_.x + bx / render_scale,
+                                        viewport_pos_.y + by / render_scale);
+                const float screen_radius = br / render_scale;
+
+                // Draw brush circle
+                const ImU32 brush_color = add_mode
+                                              ? toU32WithAlpha(t.palette.success, 0.8f)
+                                              : toU32WithAlpha(t.palette.error, 0.8f);
+                draw_list->AddCircle(screen_pos, screen_radius, brush_color, 32, 2.0f);
+                draw_list->AddCircleFilled(screen_pos, 3.0f, brush_color);
+            }
+
+            // Rectangle selection preview
+            if (rm && rm->isRectPreviewActive()) {
+                const auto& t = theme();
+
+                float rx0, ry0, rx1, ry1;
+                bool add_mode;
+                rm->getRectPreview(rx0, ry0, rx1, ry1, add_mode);
+
+                const float render_scale = rm->getSettings().render_scale;
+                const ImVec2 p0(viewport_pos_.x + rx0 / render_scale, viewport_pos_.y + ry0 / render_scale);
+                const ImVec2 p1(viewport_pos_.x + rx1 / render_scale, viewport_pos_.y + ry1 / render_scale);
+
+                const ImU32 fill_color = add_mode
+                                             ? toU32WithAlpha(t.palette.success, 0.15f)
+                                             : toU32WithAlpha(t.palette.error, 0.15f);
+                const ImU32 border_color = add_mode
+                                               ? toU32WithAlpha(t.palette.success, 0.8f)
+                                               : toU32WithAlpha(t.palette.error, 0.8f);
+
+                draw_list->AddRectFilled(p0, p1, fill_color);
+                draw_list->AddRect(p0, p1, border_color, 0.0f, 0, 2.0f);
+            }
+
+            // Polygon selection preview
+            if (rm && rm->isPolygonPreviewActive()) {
+                const auto& t = theme();
+
+                const auto& points = rm->getPolygonPoints();
+                const bool closed = rm->isPolygonClosed();
+                const bool add_mode = rm->isPolygonAddMode();
+
+                if (!points.empty()) {
+                    const float render_scale = rm->getSettings().render_scale;
+                    const ImU32 line_color = add_mode
+                                                 ? toU32WithAlpha(t.palette.success, 0.8f)
+                                                 : toU32WithAlpha(t.palette.error, 0.8f);
+                    const ImU32 fill_color = add_mode
+                                                 ? toU32WithAlpha(t.palette.success, 0.15f)
+                                                 : toU32WithAlpha(t.palette.error, 0.15f);
+                    const ImU32 vertex_color = add_mode
+                                                   ? toU32WithAlpha(t.palette.success, 1.0f)
+                                                   : toU32WithAlpha(t.palette.error, 1.0f);
+                    const ImU32 line_to_mouse_color = add_mode
+                                                          ? toU32WithAlpha(t.palette.success, 0.5f)
+                                                          : toU32WithAlpha(t.palette.error, 0.5f);
+
+                    // Build screen-space points
+                    std::vector<ImVec2> screen_points;
+                    screen_points.reserve(points.size());
+                    for (const auto& [px, py] : points) {
+                        screen_points.emplace_back(viewport_pos_.x + px / render_scale,
+                                                   viewport_pos_.y + py / render_scale);
+                    }
+
+                    // Draw filled polygon if closed
+                    if (closed && screen_points.size() >= 3) {
+                        draw_list->AddConvexPolyFilled(screen_points.data(), static_cast<int>(screen_points.size()), fill_color);
+                    }
+
+                    // Draw lines between vertices
+                    for (size_t i = 0; i + 1 < screen_points.size(); ++i) {
+                        draw_list->AddLine(screen_points[i], screen_points[i + 1], line_color, 2.0f);
+                    }
+                    if (closed && screen_points.size() >= 3) {
+                        draw_list->AddLine(screen_points.back(), screen_points.front(), line_color, 2.0f);
+                    }
+
+                    // Draw line from last vertex to mouse when not closed
+                    if (!closed) {
+                        const ImVec2 mouse_pos = ImGui::GetMousePos();
+                        draw_list->AddLine(screen_points.back(), mouse_pos, line_to_mouse_color, 1.0f);
+
+                        // Draw close hint when near first vertex
+                        constexpr float CLOSE_THRESHOLD = 12.0f;
+                        if (screen_points.size() >= 3) {
+                            const float dx = mouse_pos.x - screen_points.front().x;
+                            const float dy = mouse_pos.y - screen_points.front().y;
+                            if (dx * dx + dy * dy < CLOSE_THRESHOLD * CLOSE_THRESHOLD) {
+                                draw_list->AddCircle(screen_points.front(), 9.0f, vertex_color, 16, 2.0f);
+                            }
+                        }
+                    }
+
+                    // Draw vertices
+                    for (const auto& sp : screen_points) {
+                        draw_list->AddCircleFilled(sp, 5.0f, vertex_color);
+                    }
+                }
+            }
+
+            // Lasso selection preview
+            if (rm && rm->isLassoPreviewActive()) {
+                const auto& t = theme();
+
+                const auto& points = rm->getLassoPoints();
+                const bool add_mode = rm->isLassoAddMode();
+
+                if (points.size() >= 2) {
+                    const float render_scale = rm->getSettings().render_scale;
+                    const ImU32 line_color = add_mode
+                                                 ? toU32WithAlpha(t.palette.success, 0.8f)
+                                                 : toU32WithAlpha(t.palette.error, 0.8f);
+
+                    ImVec2 prev(viewport_pos_.x + points[0].first / render_scale,
+                                viewport_pos_.y + points[0].second / render_scale);
+                    for (size_t i = 1; i < points.size(); ++i) {
+                        ImVec2 curr(viewport_pos_.x + points[i].first / render_scale,
+                                    viewport_pos_.y + points[i].second / render_scale);
+                        draw_list->AddLine(prev, curr, line_color, 2.0f);
+                        prev = curr;
+                    }
+                }
             }
         }
 
@@ -958,9 +1133,24 @@ namespace lfs::vis::gui {
             }
         }
 
+        // Sequencer panel (above status bar)
+        if (!ui_hidden_ && ctx.editor && !ctx.editor->isToolsDisabled() && show_sequencer_) {
+            if (sequencer_ui_state_.show_camera_path) {
+                renderCameraPath(ctx);
+                renderKeyframeGizmo(ctx);
+                renderKeyframePreview(ctx);
+            }
+            renderSequencerPanel(ctx);
+            drawPipPreviewWindow(ctx);
+        }
+
         // Render status bar at bottom of viewport
         if (!ui_hidden_) {
-            renderStatusBar(ctx);
+            lfs::vis::Scene* status_bar_scene = nullptr;
+            if (auto* sm = ctx.viewer->getSceneManager()) {
+                status_bar_scene = &sm->getScene();
+            }
+            python::draw_python_panels(python::PanelSpace::StatusBar, status_bar_scene);
         }
 
         // Render viewport gizmo and handle drag-to-orbit
@@ -971,9 +1161,9 @@ namespace lfs::vis::gui {
                     const glm::vec2 vp_pos(viewport_pos_.x, viewport_pos_.y);
                     const glm::vec2 vp_size(viewport_size_.x, viewport_size_.y);
 
-                    // Gizmo bounds (lower-right corner)
+                    // Gizmo bounds (upper-right corner)
                     const float gizmo_x = vp_pos.x + vp_size.x - VIEWPORT_GIZMO_SIZE - VIEWPORT_GIZMO_MARGIN_X;
-                    const float gizmo_y = vp_pos.y + vp_size.y - VIEWPORT_GIZMO_SIZE - VIEWPORT_GIZMO_MARGIN_Y;
+                    const float gizmo_y = vp_pos.y + VIEWPORT_GIZMO_MARGIN_Y;
 
                     const ImVec2 mouse = ImGui::GetMousePos();
                     const bool mouse_in_gizmo = mouse.x >= gizmo_x && mouse.x <= gizmo_x + VIEWPORT_GIZMO_SIZE &&
@@ -1051,33 +1241,77 @@ namespace lfs::vis::gui {
             }
         }
 
-        // Render export progress overlay (blocking overlay on top of everything)
-        renderExportOverlay();
-
-        // Render import progress overlay
-        renderImportOverlay();
-
-        // Render empty state welcome screen when no content loaded
-        renderEmptyStateOverlay();
-
-        renderDragDropOverlay();
         renderStartupOverlay();
 
-        if (save_directory_popup_) {
-            save_directory_popup_->render(viewport_pos_, viewport_size_);
-        }
-        if (resume_checkpoint_popup_) {
-            resume_checkpoint_popup_->render(viewport_pos_, viewport_size_);
+        // Render keyframe context menu (needs to be at end of frame for proper z-order)
+        if (keyframe_context_menu_open_) {
+            const auto& timeline = sequencer_controller_.timeline();
+            if (ImGui::BeginPopup("KeyframeContextMenu")) {
+                if (ImGui::MenuItem("Add Keyframe Here", "K")) {
+                    lfs::core::events::cmd::SequencerAddKeyframe{}.emit();
+                }
+                if (context_menu_keyframe_.has_value() && *context_menu_keyframe_ < timeline.size()) {
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Update to Current View", "U")) {
+                        sequencer_controller_.selectKeyframe(*context_menu_keyframe_);
+                        lfs::core::events::cmd::SequencerUpdateKeyframe{}.emit();
+                    }
+                    if (ImGui::MenuItem("Go to Keyframe")) {
+                        sequencer_controller_.selectKeyframe(*context_menu_keyframe_);
+                        sequencer_controller_.seek(timeline.keyframes()[*context_menu_keyframe_].time);
+                    }
+                    ImGui::Separator();
+                    const bool translate_active = keyframe_gizmo_op_ == ImGuizmo::TRANSLATE;
+                    const bool rotate_active = keyframe_gizmo_op_ == ImGuizmo::ROTATE;
+                    if (ImGui::MenuItem("Move (Translate)", nullptr, translate_active)) {
+                        sequencer_controller_.selectKeyframe(*context_menu_keyframe_);
+                        keyframe_gizmo_op_ = translate_active ? ImGuizmo::OPERATION(0) : ImGuizmo::TRANSLATE;
+                    }
+                    if (ImGui::MenuItem("Rotate", nullptr, rotate_active)) {
+                        sequencer_controller_.selectKeyframe(*context_menu_keyframe_);
+                        keyframe_gizmo_op_ = rotate_active ? ImGuizmo::OPERATION(0) : ImGuizmo::ROTATE;
+                    }
+                    ImGui::Separator();
+                    // Easing submenu (only for non-last keyframes)
+                    const size_t idx = *context_menu_keyframe_;
+                    const bool is_last = (idx == timeline.size() - 1);
+                    if (ImGui::BeginMenu("Easing", !is_last)) {
+                        static constexpr const char* EASING_NAMES[] = {"Linear", "Ease In", "Ease Out", "Ease In-Out"};
+                        const auto current_easing = timeline.keyframes()[idx].easing;
+                        for (int e = 0; e < 4; ++e) {
+                            const auto easing = static_cast<sequencer::EasingType>(e);
+                            if (ImGui::MenuItem(EASING_NAMES[e], nullptr, current_easing == easing)) {
+                                if (current_easing != easing) {
+                                    sequencer_controller_.timeline().setKeyframeEasing(idx, easing);
+                                }
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (is_last && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("Easing controls outgoing motion\n(last keyframe has no outgoing segment)");
+                    }
+                    ImGui::Separator();
+                    const bool is_first = (*context_menu_keyframe_ == 0);
+                    if (ImGui::MenuItem("Delete Keyframe", "Del", false, !is_first)) {
+                        sequencer_controller_.selectKeyframe(*context_menu_keyframe_);
+                        sequencer_controller_.removeSelectedKeyframe();
+                    }
+                    if (is_first && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("Cannot delete first keyframe");
+                    }
+                }
+                ImGui::EndPopup();
+            } else {
+                keyframe_context_menu_open_ = false;
+                context_menu_keyframe_ = std::nullopt;
+            }
         }
 
         if (disk_space_error_dialog_)
             disk_space_error_dialog_->render();
 
-        if (notification_popup_ && !disk_space_error_dialog_->isOpen())
-            notification_popup_->render(viewport_pos_, viewport_size_);
-
-        if (exit_confirmation_popup_)
-            exit_confirmation_popup_->render();
+        // Notification popups are rendered via PyModalRegistry (draw_modals in Python bridge)
 
         // End frame
         ImGui::Render();
@@ -1108,8 +1342,21 @@ namespace lfs::vis::gui {
     void GuiManager::updateViewportRegion() {
         constexpr float PANEL_GAP = 2.0f;
         const auto* const vp = ImGui::GetMainViewport();
+
+        // Calculate Python console width if visible (handle uninitialized state)
+        float console_w = 0.0f;
+        if (window_states_["python_console"] && show_main_panel_ && !ui_hidden_) {
+            if (python_console_width_ < 0.0f) {
+                // Not yet initialized, estimate 1:1 split
+                const float available = vp->WorkSize.x - right_panel_width_ - PANEL_GAP;
+                console_w = (available - PANEL_GAP) / 2.0f + PANEL_GAP;
+            } else {
+                console_w = python_console_width_ + PANEL_GAP;
+            }
+        }
+
         const float w = (show_main_panel_ && !ui_hidden_)
-                            ? vp->WorkSize.x - right_panel_width_ - PANEL_GAP
+                            ? vp->WorkSize.x - right_panel_width_ - console_w - PANEL_GAP
                             : vp->WorkSize.x;
         const float h = ui_hidden_ ? vp->WorkSize.y : vp->WorkSize.y - STATUS_BAR_HEIGHT;
         viewport_pos_ = {vp->WorkPos.x, vp->WorkPos.y};
@@ -1160,455 +1407,489 @@ namespace lfs::vis::gui {
             return false;
 
         const float gizmo_x = viewport_pos_.x + viewport_size_.x - VIEWPORT_GIZMO_SIZE - VIEWPORT_GIZMO_MARGIN_X;
-        const float gizmo_y = viewport_pos_.y + viewport_size_.y - VIEWPORT_GIZMO_SIZE - VIEWPORT_GIZMO_MARGIN_Y;
+        const float gizmo_y = viewport_pos_.y + VIEWPORT_GIZMO_MARGIN_Y;
 
         return x >= gizmo_x && x <= gizmo_x + VIEWPORT_GIZMO_SIZE &&
                y >= gizmo_y && y <= gizmo_y + VIEWPORT_GIZMO_SIZE;
     }
 
-    void GuiManager::renderStatusBar(const UIContext& ctx) {
-        auto* const rm = ctx.viewer->getRenderingManager();
-        auto* const sm = ctx.viewer->getSceneManager();
-        if (!rm)
-            return;
+    void GuiManager::renderSequencerPanel(const UIContext& /*ctx*/) {
+        sequencer_controller_.update(ImGui::GetIO().DeltaTime);
 
-        constexpr float PADDING = 8.0f, SPACING = 20.0f, FADE_DURATION_MS = 500.0f;
-        const auto& t = theme();
-        const auto* const vp = ImGui::GetMainViewport();
-        const ImVec2 pos{vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - STATUS_BAR_HEIGHT};
-        const ImVec2 size{vp->WorkSize.x, STATUS_BAR_HEIGHT};
-        const auto now = std::chrono::steady_clock::now();
+        const bool is_playing = sequencer_controller_.isPlaying() && !sequencer_controller_.timeline().empty();
 
-        // Fade alpha helper
-        const auto fade_alpha = [&](auto start_time) {
-            const auto remaining = speed_overlay_duration_ -
-                                   std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
-            return (remaining.count() < FADE_DURATION_MS) ? remaining.count() / FADE_DURATION_MS : 1.0f;
+        if (auto* const rm = viewer_->getRenderingManager()) {
+            rm->setOverlayAnimationActive(is_playing);
+            if (is_playing && sequencer_ui_state_.follow_playback) {
+                rm->markDirty();
+                const auto state = sequencer_controller_.currentCameraState();
+                auto& viewport = viewer_->getViewport();
+                viewport.camera.R = glm::mat3_cast(state.rotation);
+                viewport.camera.t = state.position;
+            }
+        }
+
+        sequencer_panel_->setSnapEnabled(sequencer_ui_state_.snap_to_grid);
+        sequencer_panel_->setSnapInterval(sequencer_ui_state_.snap_interval);
+        sequencer_panel_->render(viewport_pos_.x, viewport_size_.x, viewport_pos_.y + viewport_size_.y);
+    }
+
+    void GuiManager::renderCameraPath(const UIContext& /*ctx*/) {
+        constexpr float PATH_THICKNESS = 2.0f;
+        constexpr float FRUSTUM_THICKNESS = 1.5f;
+        constexpr float NDC_CULL_MARGIN = 1.5f;
+        constexpr int PATH_SAMPLES = 20;
+        constexpr float FRUSTUM_SIZE = 0.15f;  // Size of frustum base
+        constexpr float FRUSTUM_DEPTH = 0.25f; // Depth of frustum
+        constexpr float HIT_RADIUS = 15.0f;    // Click detection radius in pixels
+
+        const auto& timeline = sequencer_controller_.timeline();
+        const auto& viewport = viewer_->getViewport();
+        const glm::mat4 view_proj = viewport.getProjectionMatrix() * viewport.getViewMatrix();
+
+        const auto projectToScreen = [&](const glm::vec3& pos) -> ImVec2 {
+            const glm::vec4 clip = view_proj * glm::vec4(pos, 1.0f);
+            if (clip.w <= 0.0f)
+                return {-10000.0f, -10000.0f};
+            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+            return {viewport_pos_.x + (ndc.x * 0.5f + 0.5f) * viewport_size_.x,
+                    viewport_pos_.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewport_size_.y};
         };
 
-        // Update overlay timers
-        if (speed_overlay_visible_ && now - speed_overlay_start_time_ >= speed_overlay_duration_)
-            speed_overlay_visible_ = false;
-        if (zoom_speed_overlay_visible_ && now - zoom_speed_overlay_start_time_ >= speed_overlay_duration_)
-            zoom_speed_overlay_visible_ = false;
+        const auto isVisible = [&](const glm::vec3& pos) -> bool {
+            const glm::vec4 clip = view_proj * glm::vec4(pos, 1.0f);
+            if (clip.w <= 0.0f)
+                return false;
+            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+            return std::abs(ndc.x) <= NDC_CULL_MARGIN && std::abs(ndc.y) <= NDC_CULL_MARGIN;
+        };
 
-        ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+        ImDrawList* const dl = ImGui::GetBackgroundDrawList();
+        const auto& t = theme();
 
-        constexpr ImGuiWindowFlags FLAGS =
-            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing;
+        if (timeline.empty())
+            return;
 
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(t.palette.background, 0.95f));
-        ImGui::PushStyleColor(ImGuiCol_Border, withAlpha(t.palette.border, 0.6f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {PADDING, 3.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {6.0f, 0.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-
-        if (ImGui::Begin("##StatusBar", nullptr, FLAGS)) {
-            // Use regular font as base for status bar
-            if (ctx.fonts.regular)
-                ImGui::PushFont(ctx.fonts.regular);
-
-            ImGui::GetWindowDrawList()->AddLine(pos, {pos.x + size.x, pos.y},
-                                                toU32(withAlpha(t.palette.surface_bright, 0.4f)), 1.0f);
-
-            // Mode (bold)
-            const char* mode = "Empty";
-            ImVec4 color = t.palette.text_dim;
-            TrainerManager* trainer_mgr = nullptr;
-            bool show_training_progress = false;
-            char mode_buf[64] = {};
-
-            if (sm) {
-                switch (sm->getContentType()) {
-                case SceneManager::ContentType::SplatFiles:
-                    mode = "Viewer";
-                    color = t.palette.info;
-                    break;
-                case SceneManager::ContentType::Dataset:
-                    trainer_mgr = sm->getTrainerManager();
-                    if (trainer_mgr && trainer_mgr->hasTrainer()) {
-                        const auto state = trainer_mgr->getState();
-                        const int current_iter = trainer_mgr->getCurrentIteration();
-                        const char* base_mode = "Dataset";
-                        switch (state) {
-                        case TrainerManager::State::Running:
-                            base_mode = "Training";
-                            color = t.palette.warning;
-                            show_training_progress = true;
-                            break;
-                        case TrainerManager::State::Paused:
-                            base_mode = "Paused";
-                            color = t.palette.text_dim;
-                            show_training_progress = true;
-                            break;
-                        case TrainerManager::State::Ready:
-                            base_mode = (current_iter > 0) ? "Resume" : "Ready";
-                            color = t.palette.success;
-                            break;
-                        case TrainerManager::State::Finished: {
-                            const auto reason = trainer_mgr->getStateMachine().getFinishReason();
-                            if (reason == FinishReason::Completed) {
-                                base_mode = "Complete";
-                                color = t.palette.success;
-                                show_training_progress = true;
-                            } else {
-                                base_mode = "Error";
-                                color = t.palette.error;
-                            }
-                            break;
-                        }
-                        default: break;
-                        }
-                        // Add strategy and method info
-                        const char* strategy = trainer_mgr->getStrategyType();
-                        const bool gut = trainer_mgr->isGutEnabled();
-                        snprintf(mode_buf, sizeof(mode_buf), "%s (%s/%s)",
-                                 base_mode,
-                                 strcmp(strategy, "mcmc") == 0 ? "MCMC" : "Default",
-                                 gut ? "GUT" : "3DGS");
-                        mode = mode_buf;
-                    } else {
-                        mode = "Dataset";
-                    }
-                    break;
-                default: break;
-                }
+        // Path line
+        const auto path_points = timeline.generatePath(PATH_SAMPLES);
+        if (path_points.size() >= 2) {
+            const ImU32 path_color = toU32WithAlpha(t.palette.primary, 0.8f);
+            for (size_t i = 0; i + 1 < path_points.size(); ++i) {
+                if (!isVisible(path_points[i]) && !isVisible(path_points[i + 1]))
+                    continue;
+                dl->AddLine(projectToScreen(path_points[i]), projectToScreen(path_points[i + 1]), path_color, PATH_THICKNESS);
             }
-            if (ctx.fonts.bold)
-                ImGui::PushFont(ctx.fonts.bold);
-            ImGui::TextColored(color, "%s", mode);
-            if (ctx.fonts.bold)
-                ImGui::PopFont();
+        }
 
-            // Training progress display
-            if (show_training_progress && trainer_mgr) {
-                constexpr float SECTION_GAP = 12.0f;
-                constexpr float LABEL_GAP = 6.0f;
-                constexpr float SEP_GAP = 20.0f;
-                constexpr float BAR_WIDTH = 120.0f;
-                constexpr float BAR_HEIGHT = 12.0f;
-                constexpr float BAR_ROUNDING = 2.0f;
+        // Hit testing for keyframe clicking
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const bool mouse_in_viewport = mouse.x >= viewport_pos_.x && mouse.x <= viewport_pos_.x + viewport_size_.x &&
+                                       mouse.y >= viewport_pos_.y && mouse.y <= viewport_pos_.y + viewport_size_.y;
 
-                const int current_iter = trainer_mgr->getCurrentIteration();
-                const int total_iter = trainer_mgr->getTotalIterations();
-                const float progress = total_iter > 0
-                                           ? static_cast<float>(current_iter) / static_cast<float>(total_iter)
-                                           : 0.0f;
+        std::optional<size_t> hovered_keyframe;
+        float closest_dist = HIT_RADIUS;
 
-                ImDrawList* const draw_list = ImGui::GetWindowDrawList();
-                ImFont* const font = ctx.fonts.bold ? ctx.fonts.bold : ImGui::GetFont();
-                const float font_size = font->FontSize;
-                const float y_text = pos.y + (STATUS_BAR_HEIGHT - font_size) * 0.5f;
-                const float y_bar = pos.y + (STATUS_BAR_HEIGHT - BAR_HEIGHT) * 0.5f;
-                const ImU32 col_text = toU32(t.palette.text);
-                const ImU32 col_dim = toU32(t.palette.text_dim);
-                const ImU32 col_bar_bg = toU32(withAlpha(t.palette.surface_bright, 0.5f));
-                const ImU32 col_bar_fill = toU32(t.palette.primary);
+        // Draw frustums at keyframe positions
+        const ImU32 frustum_color = toU32WithAlpha(t.palette.primary, 0.7f);
+        const ImU32 hovered_frustum_color = toU32WithAlpha(lighten(t.palette.primary, 0.15f), 0.85f);
+        const ImU32 selected_frustum_color = toU32WithAlpha(lighten(t.palette.primary, 0.3f), 0.9f);
 
-                // Helper: draw label and advance cursor
-                const auto draw_label = [&](float& x, const char* label) {
-                    draw_list->AddText(font, font_size, {x, y_text}, col_dim, label);
-                    x += font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label).x + LABEL_GAP;
-                };
+        for (size_t i = 0; i < timeline.keyframes().size(); ++i) {
+            const auto& kf = timeline.keyframes()[i];
+            if (!isVisible(kf.position))
+                continue;
 
-                // Helper: draw value and advance cursor
-                const auto draw_value = [&](float& x, const char* value) {
-                    draw_list->AddText(font, font_size, {x, y_text}, col_text, value);
-                    x += font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, value).x;
-                };
+            const ImVec2 s_apex = projectToScreen(kf.position);
 
-                // Helper: draw separator and advance cursor
-                const auto draw_sep = [&](float& x) {
-                    draw_list->AddText(font, font_size, {x, y_text}, col_dim, "|");
-                    x += SEP_GAP;
-                };
-
-                // Helper: format count with K/M suffix
-                const auto fmt_count = [](const int n, char* buf, const size_t size) {
-                    if (n >= 1'000'000)
-                        snprintf(buf, size, "%.2fM", n / 1e6);
-                    else if (n >= 1'000)
-                        snprintf(buf, size, "%.0fK", n / 1e3);
-                    else
-                        snprintf(buf, size, "%d", n);
-                };
-
-                // Helper: format time as h:mm:ss or m:ss
-                const auto fmt_time = [](const float secs, char* buf, const size_t size) {
-                    if (secs < 0.0f) {
-                        snprintf(buf, size, "--:--");
-                        return;
-                    }
-                    const int total = static_cast<int>(secs);
-                    const int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
-                    if (h > 0)
-                        snprintf(buf, size, "%d:%02d:%02d", h, m, s);
-                    else
-                        snprintf(buf, size, "%d:%02d", m, s);
-                };
-
-                ImGui::SameLine(0.0f, SPACING);
-                ImGui::TextColored(t.palette.text_dim, "|");
-                ImGui::SameLine(0.0f, SPACING);
-
-                float x = ImGui::GetCursorScreenPos().x;
-
-                // Progress bar
-                draw_list->AddRectFilled({x, y_bar}, {x + BAR_WIDTH, y_bar + BAR_HEIGHT},
-                                         col_bar_bg, BAR_ROUNDING);
-                if (progress > 0.0f) {
-                    draw_list->AddRectFilled({x, y_bar}, {x + BAR_WIDTH * progress, y_bar + BAR_HEIGHT},
-                                             col_bar_fill, BAR_ROUNDING);
-                }
-                char pct_buf[8];
-                snprintf(pct_buf, sizeof(pct_buf), "%.0f%%", progress * 100.0f);
-                const ImVec2 pct_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, pct_buf);
-                draw_list->AddText(font, font_size,
-                                   {x + (BAR_WIDTH - pct_size.x) * 0.5f, y_bar + (BAR_HEIGHT - pct_size.y) * 0.5f},
-                                   col_text, pct_buf);
-                x += BAR_WIDTH + SECTION_GAP;
-
-                // Step
-                char iter_buf[32];
-                snprintf(iter_buf, sizeof(iter_buf), "%d/%d", current_iter, total_iter);
-                draw_label(x, "Step");
-                draw_value(x, iter_buf);
-                x += SECTION_GAP;
-                draw_sep(x);
-
-                // Loss
-                char loss_buf[16];
-                snprintf(loss_buf, sizeof(loss_buf), "%.4f", trainer_mgr->getCurrentLoss());
-                draw_label(x, "Loss");
-                draw_value(x, loss_buf);
-                x += SECTION_GAP;
-                draw_sep(x);
-
-                // Gaussians
-                char cur_buf[16], max_buf[16], gauss_buf[32];
-                fmt_count(trainer_mgr->getNumSplats(), cur_buf, sizeof(cur_buf));
-                fmt_count(trainer_mgr->getMaxGaussians(), max_buf, sizeof(max_buf));
-                snprintf(gauss_buf, sizeof(gauss_buf), "%s/%s", cur_buf, max_buf);
-                draw_label(x, "Gaussians");
-                draw_value(x, gauss_buf);
-                x += SECTION_GAP;
-                draw_sep(x);
-
-                // Time
-                char elapsed_buf[16], eta_buf[16];
-                fmt_time(trainer_mgr->getElapsedSeconds(), elapsed_buf, sizeof(elapsed_buf));
-                fmt_time(trainer_mgr->getEstimatedRemainingSeconds(), eta_buf, sizeof(eta_buf));
-                draw_value(x, elapsed_buf);
-                x += LABEL_GAP;
-                draw_label(x, "ETA");
-                draw_value(x, eta_buf);
-
-                ImGui::SameLine();
-                ImGui::Dummy({x - ImGui::GetCursorScreenPos().x + SECTION_GAP, STATUS_BAR_HEIGHT});
-            }
-
-            // Splat count (visible / total) - skip during training
-            if (sm && !show_training_progress) {
-                size_t total = 0, visible = 0;
-                for (const auto* n : sm->getScene().getNodes()) {
-                    if (n->type == NodeType::SPLAT) {
-                        total += n->gaussian_count;
-                        if (n->visible.get())
-                            visible += n->gaussian_count;
-                    }
-                }
-                if (total > 0) {
-                    ImGui::SameLine(0.0f, SPACING);
-                    ImGui::TextColored(t.palette.text_dim, "|");
-                    ImGui::SameLine();
-                    const auto fmt = [](const size_t n) -> std::string {
-                        if (n >= 1'000'000)
-                            return std::format("{:.2f}M", n / 1e6);
-                        if (n >= 1'000)
-                            return std::format("{:.1f}K", n / 1e3);
-                        return std::to_string(n);
-                    };
-                    if (ctx.fonts.bold)
-                        ImGui::PushFont(ctx.fonts.bold);
-                    if (visible == total)
-                        ImGui::Text(LOC(lichtfeld::Strings::Progress::GAUSSIANS_COUNT), fmt(total).c_str());
-                    else
-                        ImGui::Text("%s / %s", fmt(visible).c_str(), fmt(total).c_str());
-                    if (ctx.fonts.bold)
-                        ImGui::PopFont();
+            // Hit test
+            if (mouse_in_viewport) {
+                const float dist = std::sqrt((mouse.x - s_apex.x) * (mouse.x - s_apex.x) +
+                                             (mouse.y - s_apex.y) * (mouse.y - s_apex.y));
+                if (dist < closest_dist) {
+                    closest_dist = dist;
+                    hovered_keyframe = i;
                 }
             }
 
-            // Split view / GT comparison
-            if (const auto info = rm->getSplitViewInfo(); info.enabled) {
-                ImGui::SameLine(0.0f, SPACING);
-                ImGui::TextColored(t.palette.text_dim, "|");
-                ImGui::SameLine();
-                if (rm->getSettings().split_view_mode == SplitViewMode::GTComparison) {
-                    const int cam_id = rm->getCurrentCameraId();
-                    auto* sm_trainer_mgr = sm ? sm->getTrainerManager() : nullptr;
-                    auto cam = sm_trainer_mgr ? sm_trainer_mgr->getCamById(cam_id) : nullptr;
+            const bool selected = sequencer_controller_.selectedKeyframe() == i;
+            const bool hovered = hovered_keyframe == i;
+            ImU32 color = frustum_color;
+            if (selected)
+                color = selected_frustum_color;
+            else if (hovered)
+                color = hovered_frustum_color;
+            const float thickness = selected ? FRUSTUM_THICKNESS * 1.5f : FRUSTUM_THICKNESS;
 
-                    if (cam) {
-                        // Image filename and extension
-                        const auto& path = cam->image_path();
-                        const std::string filename = lfs::core::path_to_utf8(path.filename());
-                        std::string ext = path.extension().string();
-                        if (!ext.empty() && ext[0] == '.')
-                            ext = ext.substr(1);
-                        for (auto& c : ext)
-                            c = static_cast<char>(std::toupper(c));
+            // Build frustum in camera local space, then transform to world
+            // Apply GL_TO_COLMAP transform (flip Y and Z) to match training camera frustums
+            const glm::mat3 rot_mat = glm::mat3_cast(kf.rotation);
+            const glm::vec3 forward = rot_mat[2]; // Z (GL_TO_COLMAP flips Z, was -Z)
+            const glm::vec3 up = -rot_mat[1];     // -Y (GL_TO_COLMAP flips Y)
+            const glm::vec3 right = rot_mat[0];   // X (unchanged)
 
-                        // Infer channels from extension
-                        const char* channels = "RGB";
-                        if (ext == "PNG" || ext == "WEBP" || ext == "TIFF" || ext == "TIF" || ext == "EXR")
-                            channels = "RGBA";
+            // Frustum apex at camera position
+            const glm::vec3 apex = kf.position;
 
-                        ImGui::TextColored(t.palette.info, "%s", filename.c_str());
-                        ImGui::SameLine(0.0f, SPACING);
-                        ImGui::TextColored(t.palette.text_dim, "|");
-                        ImGui::SameLine(0.0f, SPACING);
+            // Frustum base corners (in front of camera)
+            const glm::vec3 base_center = apex + forward * FRUSTUM_DEPTH;
+            const glm::vec3 tl = base_center + up * FRUSTUM_SIZE - right * FRUSTUM_SIZE;
+            const glm::vec3 tr = base_center + up * FRUSTUM_SIZE + right * FRUSTUM_SIZE;
+            const glm::vec3 bl = base_center - up * FRUSTUM_SIZE - right * FRUSTUM_SIZE;
+            const glm::vec3 br = base_center - up * FRUSTUM_SIZE + right * FRUSTUM_SIZE;
 
-                        // Dimensions and channels
-                        ImGui::TextColored(t.palette.text_dim, "%dx%d %s",
-                                           cam->image_width(), cam->image_height(), channels);
-                        ImGui::SameLine(0.0f, SPACING);
+            // Project all points
+            const ImVec2 s_tl = projectToScreen(tl);
+            const ImVec2 s_tr = projectToScreen(tr);
+            const ImVec2 s_bl = projectToScreen(bl);
+            const ImVec2 s_br = projectToScreen(br);
 
-                        // Format
-                        ImGui::TextColored(t.palette.text_dim, "%s", ext.c_str());
+            // Draw frustum edges (apex to corners)
+            dl->AddLine(s_apex, s_tl, color, thickness);
+            dl->AddLine(s_apex, s_tr, color, thickness);
+            dl->AddLine(s_apex, s_bl, color, thickness);
+            dl->AddLine(s_apex, s_br, color, thickness);
 
-                        // Mask indicator
-                        if (cam->has_mask()) {
-                            ImGui::SameLine(0.0f, SPACING);
-                            ImGui::TextColored(t.palette.success, "MASK");
-                        }
+            // Draw base rectangle
+            dl->AddLine(s_tl, s_tr, color, thickness);
+            dl->AddLine(s_tr, s_br, color, thickness);
+            dl->AddLine(s_br, s_bl, color, thickness);
+            dl->AddLine(s_bl, s_tl, color, thickness);
 
-                        // Camera model (always show)
-                        ImGui::SameLine(0.0f, SPACING);
-                        const auto model_type = cam->camera_model_type();
-                        const char* model = "PINHOLE";
-                        switch (model_type) {
-                        case lfs::core::CameraModelType::FISHEYE: model = "FISHEYE"; break;
-                        case lfs::core::CameraModelType::ORTHO: model = "ORTHO"; break;
-                        case lfs::core::CameraModelType::EQUIRECTANGULAR: model = "EQUIRECT"; break;
-                        case lfs::core::CameraModelType::THIN_PRISM_FISHEYE: model = "THIN_PRISM"; break;
-                        default: break;
-                        }
-                        const bool is_pinhole = (model_type == lfs::core::CameraModelType::PINHOLE);
-                        ImGui::TextColored(is_pinhole ? t.palette.text_dim : t.palette.warning, "%s", model);
-                    } else {
-                        ImGui::TextColored(t.palette.warning, "GT Compare");
-                        ImGui::SameLine(0.0f, 4.0f);
-                        ImGui::TextColored(t.palette.text_dim, "Cam %d", cam_id);
-                    }
-                } else {
-                    ImGui::TextColored(t.palette.warning, "Split:");
-                    ImGui::SameLine(0.0f, 4.0f);
-                    ImGui::Text("%s | %s", info.left_name.c_str(), info.right_name.c_str());
-                }
+            // Draw "up" indicator (small triangle on top edge)
+            const glm::vec3 up_tip = base_center + up * FRUSTUM_SIZE * 1.3f;
+            const ImVec2 s_up = projectToScreen(up_tip);
+            dl->AddTriangleFilled(s_up, s_tl, s_tr, color);
+        }
+
+        // Handle keyframe clicking
+        if (mouse_in_viewport && !ImGui::IsAnyItemHovered()) {
+            // Left click to select (blocked when gizmo is active to avoid accidental selection)
+            if (hovered_keyframe.has_value() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver()) {
+                sequencer_controller_.selectKeyframe(*hovered_keyframe);
             }
-
-            // WASD speed
-            if (speed_overlay_visible_) {
-                const float a = fade_alpha(speed_overlay_start_time_);
-                ImGui::SameLine(0.0f, SPACING);
-                ImGui::TextColored(withAlpha(t.palette.text_dim, a), "|");
-                ImGui::SameLine();
-                ImGui::TextColored(withAlpha(t.palette.info, a), "WASD: %.0f", current_speed_);
+            // Right click for context menu (always allowed, even with gizmo active)
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                context_menu_keyframe_ = hovered_keyframe;
+                keyframe_context_menu_open_ = true;
+                ImGui::OpenPopup("KeyframeContextMenu");
             }
+        }
 
-            // Zoom speed
-            if (zoom_speed_overlay_visible_) {
-                const float a = fade_alpha(zoom_speed_overlay_start_time_);
-                ImGui::SameLine(0.0f, SPACING);
-                ImGui::TextColored(withAlpha(t.palette.text_dim, a), "|");
-                ImGui::SameLine();
-                ImGui::TextColored(withAlpha(t.palette.info, a), "Zoom: %.0f", zoom_speed_ * 10.0f);
+        // Playhead camera frustum (during playback/scrubbing)
+        if (!sequencer_controller_.isStopped()) {
+            const auto state = sequencer_controller_.currentCameraState();
+            if (isVisible(state.position)) {
+                const ImU32 playhead_color = t.error_u32();
+                constexpr float PLAYHEAD_FRUSTUM_SIZE = 0.12f;
+                constexpr float PLAYHEAD_FRUSTUM_DEPTH = 0.20f;
+
+                // Build frustum from interpolated camera state
+                const glm::mat3 rot_mat = glm::mat3_cast(state.rotation);
+                const glm::vec3 forward = rot_mat[2];
+                const glm::vec3 up = -rot_mat[1];
+                const glm::vec3 right = rot_mat[0];
+
+                const glm::vec3 apex = state.position;
+                const glm::vec3 base_center = apex + forward * PLAYHEAD_FRUSTUM_DEPTH;
+                const glm::vec3 tl = base_center + up * PLAYHEAD_FRUSTUM_SIZE - right * PLAYHEAD_FRUSTUM_SIZE;
+                const glm::vec3 tr = base_center + up * PLAYHEAD_FRUSTUM_SIZE + right * PLAYHEAD_FRUSTUM_SIZE;
+                const glm::vec3 bl = base_center - up * PLAYHEAD_FRUSTUM_SIZE - right * PLAYHEAD_FRUSTUM_SIZE;
+                const glm::vec3 br = base_center - up * PLAYHEAD_FRUSTUM_SIZE + right * PLAYHEAD_FRUSTUM_SIZE;
+
+                const ImVec2 s_apex = projectToScreen(apex);
+                const ImVec2 s_tl = projectToScreen(tl);
+                const ImVec2 s_tr = projectToScreen(tr);
+                const ImVec2 s_bl = projectToScreen(bl);
+                const ImVec2 s_br = projectToScreen(br);
+
+                // Draw frustum edges
+                dl->AddLine(s_apex, s_tl, playhead_color, FRUSTUM_THICKNESS);
+                dl->AddLine(s_apex, s_tr, playhead_color, FRUSTUM_THICKNESS);
+                dl->AddLine(s_apex, s_bl, playhead_color, FRUSTUM_THICKNESS);
+                dl->AddLine(s_apex, s_br, playhead_color, FRUSTUM_THICKNESS);
+
+                // Draw base rectangle
+                dl->AddLine(s_tl, s_tr, playhead_color, FRUSTUM_THICKNESS);
+                dl->AddLine(s_tr, s_br, playhead_color, FRUSTUM_THICKNESS);
+                dl->AddLine(s_br, s_bl, playhead_color, FRUSTUM_THICKNESS);
+                dl->AddLine(s_bl, s_tl, playhead_color, FRUSTUM_THICKNESS);
+
+                // Draw "up" indicator
+                const glm::vec3 up_tip = base_center + up * PLAYHEAD_FRUSTUM_SIZE * 1.3f;
+                const ImVec2 s_up = projectToScreen(up_tip);
+                dl->AddTriangleFilled(s_up, s_tl, s_tr, playhead_color);
             }
+        }
+    }
 
-            // GPU Memory and FPS (right-aligned)
-            constexpr float GPU_MEM_WARN_PCT = 50.0f;
-            constexpr float GPU_MEM_CRIT_PCT = 75.0f;
-            constexpr float FPS_GOOD = 30.0f;
-            constexpr float FPS_WARN = 15.0f;
-            constexpr float BYTES_TO_GB = 1e-9f;
+    void GuiManager::renderKeyframeGizmo(const UIContext& ctx) {
+        if (keyframe_gizmo_op_ == ImGuizmo::OPERATION(0))
+            return;
 
-            ImFont* const font = ctx.fonts.bold ? ctx.fonts.bold : ImGui::GetFont();
+        const auto selected = sequencer_controller_.selectedKeyframe();
+        if (!selected.has_value()) {
+            keyframe_gizmo_op_ = ImGuizmo::OPERATION(0);
+            return;
+        }
 
-            size_t free_mem = 0, total_mem = 0;
-            cudaMemGetInfo(&free_mem, &total_mem);
-            const float used_gb = static_cast<float>(total_mem - free_mem) * BYTES_TO_GB;
-            const float total_gb = static_cast<float>(total_mem) * BYTES_TO_GB;
-            const float pct_used = (used_gb / total_gb) * 100.0f;
+        const auto& timeline = sequencer_controller_.timeline();
+        if (*selected >= timeline.size())
+            return;
 
-            const ImVec4 mem_color = pct_used < GPU_MEM_WARN_PCT   ? t.palette.success
-                                     : pct_used < GPU_MEM_CRIT_PCT ? t.palette.warning
-                                                                   : t.palette.error;
+        const auto* kf = timeline.getKeyframe(*selected);
+        if (!kf || kf->is_loop_point) {
+            keyframe_gizmo_op_ = ImGuizmo::OPERATION(0);
+            return;
+        }
 
-            char mem_buf[32];
-            snprintf(mem_buf, sizeof(mem_buf), "%.1f/%.1fGB", used_gb, total_gb);
+        auto* const rendering_manager = ctx.viewer->getRenderingManager();
+        if (!rendering_manager)
+            return;
 
-            const float fps = rm->getAverageFPS();
-            const ImVec4 fps_color = fps >= FPS_GOOD   ? t.palette.success
-                                     : fps >= FPS_WARN ? t.palette.warning
-                                                       : t.palette.error;
-            char fps_buf[16];
-            snprintf(fps_buf, sizeof(fps_buf), "%.0f", fps);
+        const auto& settings = rendering_manager->getSettings();
+        auto& viewport = ctx.viewer->getViewport();
+        const glm::mat4 view = viewport.getViewMatrix();
+        const glm::ivec2 vp_size(static_cast<int>(viewport_size_.x), static_cast<int>(viewport_size_.y));
+        const glm::mat4 projection = lfs::rendering::createProjectionMatrix(
+            vp_size, lfs::rendering::focalLengthToVFov(settings.focal_length_mm), settings.orthographic, settings.ortho_scale);
 
-            const float mem_val_w = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, mem_buf).x;
-            const float mem_label_w = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, "GPU ").x;
-            const float fps_w = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, fps_buf).x;
-            const float fps_label_w = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, " FPS").x;
-            const float version_label_w = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, GIT_COMMIT_HASH_SHORT).x;
+        const glm::mat3 rot_mat = glm::mat3_cast(kf->rotation);
+        glm::mat4 gizmo_matrix(rot_mat);
+        gizmo_matrix[3] = glm::vec4(kf->position, 1.0f);
 
-            ImGui::SameLine(size.x - (version_label_w + SPACING + mem_label_w + mem_val_w + SPACING + fps_w + fps_label_w) - PADDING * 2);
+        ImGuizmo::SetOrthographic(settings.orthographic);
+        ImGuizmo::SetRect(viewport_pos_.x, viewport_pos_.y, viewport_size_.x, viewport_size_.y);
 
-            ImGui::TextColored(t.palette.text_dim, "GPU ");
-            ImGui::SameLine(0.0f, 0.0f);
-            if (ctx.fonts.bold)
-                ImGui::PushFont(ctx.fonts.bold);
-            ImGui::TextColored(mem_color, "%s", mem_buf);
-            if (ctx.fonts.bold)
-                ImGui::PopFont();
+        ImDrawList* const dl = ImGui::GetForegroundDrawList();
+        const ImVec2 clip_min(viewport_pos_.x, viewport_pos_.y);
+        const ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
+        dl->PushClipRect(clip_min, clip_max, true);
+        ImGuizmo::SetDrawlist(dl);
 
-            ImGui::SameLine(0.0f, SPACING);
+        const ImGuizmo::MODE mode = (keyframe_gizmo_op_ == ImGuizmo::ROTATE) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+        glm::mat4 delta;
+        const bool changed = ImGuizmo::Manipulate(
+            glm::value_ptr(view), glm::value_ptr(projection),
+            keyframe_gizmo_op_, mode,
+            glm::value_ptr(gizmo_matrix), glm::value_ptr(delta), nullptr);
 
-            if (ctx.fonts.bold)
-                ImGui::PushFont(ctx.fonts.bold);
-            ImGui::TextColored(fps_color, "%s", fps_buf);
-            ImGui::SameLine(0.0f, 0.0f);
-            ImGui::TextColored(t.palette.text_dim, " %s", LOC(lichtfeld::Strings::Status::FPS));
-            if (ctx.fonts.bold)
-                ImGui::PopFont();
+        const bool is_using = ImGuizmo::IsUsing();
 
-            ImGui::SameLine(0.0f, SPACING);
+        if (is_using && !keyframe_gizmo_active_) {
+            keyframe_gizmo_active_ = true;
+            keyframe_pos_before_drag_ = kf->position;
+            keyframe_rot_before_drag_ = kf->rotation;
+        }
 
-            ImGui::TextColored(t.palette.text_dim, GIT_COMMIT_HASH_SHORT);
+        if (changed) {
+            const glm::vec3 new_pos(gizmo_matrix[3]);
+            const glm::quat new_rot = glm::quat_cast(glm::mat3(gizmo_matrix));
+            sequencer_controller_.timeline().updateKeyframe(*selected, new_pos, new_rot, kf->fov);
+            sequencer_controller_.updateLoopKeyframe();
+            pip_needs_update_ = true;
+        }
 
-            if (ctx.fonts.regular)
-                ImGui::PopFont();
+        if (!is_using && keyframe_gizmo_active_) {
+            keyframe_gizmo_active_ = false;
+        }
+
+        dl->PopClipRect();
+    }
+
+    void GuiManager::initPipPreview() {
+        if (pip_initialized_)
+            return;
+
+        glGenFramebuffers(1, &pip_fbo_);
+        glGenTextures(1, &pip_texture_);
+        glGenRenderbuffers(1, &pip_depth_rbo_);
+
+        glBindTexture(GL_TEXTURE_2D, pip_texture_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, PREVIEW_WIDTH, PREVIEW_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        glBindRenderbuffer(GL_RENDERBUFFER, pip_depth_rbo_);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, pip_fbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pip_texture_, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, pip_depth_rbo_);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            LOG_ERROR("PiP preview FBO incomplete");
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            return;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        pip_initialized_ = true;
+    }
+
+    void GuiManager::renderKeyframePreview(const UIContext& ctx) {
+        const bool is_playing = !sequencer_controller_.isStopped();
+        const auto selected = sequencer_controller_.selectedKeyframe();
+
+        if (!is_playing && !selected.has_value()) {
+            pip_last_keyframe_ = std::nullopt;
+            return;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (is_playing) {
+            const float elapsed = std::chrono::duration<float>(now - pip_last_render_time_).count();
+            if (elapsed < 1.0f / PREVIEW_TARGET_FPS)
+                return;
+        }
+
+        auto* const rm = ctx.viewer->getRenderingManager();
+        auto* const sm = ctx.viewer->getSceneManager();
+        if (!rm || !sm)
+            return;
+
+        if (!pip_initialized_)
+            initPipPreview();
+
+        glm::mat3 cam_rot;
+        glm::vec3 cam_pos;
+        float cam_fov;
+
+        if (is_playing) {
+            const auto state = sequencer_controller_.currentCameraState();
+            cam_rot = glm::mat3_cast(state.rotation);
+            cam_pos = state.position;
+            cam_fov = state.fov;
+        } else {
+            if (pip_last_keyframe_ == selected && !pip_needs_update_)
+                return;
+
+            const auto& timeline = sequencer_controller_.timeline();
+            if (*selected >= timeline.size())
+                return;
+
+            const auto* const kf = timeline.getKeyframe(*selected);
+            if (!kf)
+                return;
+
+            cam_rot = glm::mat3_cast(kf->rotation);
+            cam_pos = kf->position;
+            cam_fov = kf->fov;
+        }
+
+        if (rm->renderPreviewFrame(sm, cam_rot, cam_pos, cam_fov, pip_fbo_, pip_texture_, PREVIEW_WIDTH, PREVIEW_HEIGHT)) {
+            pip_last_render_time_ = now;
+            if (!is_playing) {
+                pip_last_keyframe_ = selected;
+                pip_needs_update_ = false;
+            }
+        }
+    }
+
+    void GuiManager::drawPipPreviewWindow([[maybe_unused]] const UIContext& ctx) {
+        const bool is_playing = !sequencer_controller_.isStopped();
+        const auto selected = sequencer_controller_.selectedKeyframe();
+
+        if (!is_playing && !selected.has_value())
+            return;
+        if (!pip_initialized_ || pip_texture_ == 0)
+            return;
+
+        if (!is_playing) {
+            const auto& timeline = sequencer_controller_.timeline();
+            if (*selected >= timeline.size())
+                return;
+            const auto* const kf = timeline.getKeyframe(*selected);
+            if (!kf || kf->is_loop_point)
+                return;
+        }
+
+        const auto& t = theme();
+        const float scale = sequencer_ui_state_.pip_preview_scale;
+        constexpr float MARGIN = 16.0f;
+        constexpr float PANEL_HEIGHT = 90.0f;
+        const float scaled_width = static_cast<float>(PREVIEW_WIDTH) * scale;
+        const float scaled_height = static_cast<float>(PREVIEW_HEIGHT) * scale;
+        const ImVec2 window_size(scaled_width, scaled_height + 24.0f);
+        const ImVec2 window_pos(
+            viewport_pos_.x + MARGIN,
+            viewport_pos_.y + viewport_size_.y - PANEL_HEIGHT - window_size.y - MARGIN);
+
+        ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(window_size, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.95f);
+
+        // Use different border color during playback
+        const ImU32 border_color = is_playing
+                                       ? t.error_u32()
+                                       : toU32WithAlpha(t.palette.primary, 0.6f);
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, toU32(t.palette.surface));
+        ImGui::PushStyleColor(ImGuiCol_Border, border_color);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, t.sizes.window_rounding);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {4.0f, 4.0f});
+
+        constexpr ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoScrollbar;
+
+        if (ImGui::Begin("##KeyframePreview", nullptr, flags)) {
+            const std::string title = is_playing
+                                          ? std::format("Playback {:.2f}s", sequencer_controller_.playhead())
+                                          : std::format("Keyframe {} Preview", *selected + 1);
+            ImGui::TextColored({t.palette.text.x, t.palette.text.y, t.palette.text.z, 0.8f}, "%s", title.c_str());
+            ImGui::Image(static_cast<ImTextureID>(pip_texture_),
+                         {scaled_width - 8.0f, scaled_height - 8.0f}, {0, 1}, {1, 0});
         }
         ImGui::End();
-
-        ImGui::PopStyleVar(4);
+        ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(2);
     }
 
-    void GuiManager::showSpeedOverlay(const float current_speed, float /*max_speed*/) {
-        current_speed_ = current_speed;
-        speed_overlay_visible_ = true;
-        speed_overlay_start_time_ = std::chrono::steady_clock::now();
+    void GuiManager::renderDockedPythonConsole(const UIContext& ctx, float panel_x, float panel_h) {
+        const auto* const vp = ImGui::GetMainViewport();
+        const auto& io = ImGui::GetIO();
+        constexpr float EDGE_GRAB_W = 8.0f;
+
+        // Check if hovering over left edge for resize
+        python_console_hovering_edge_ = io.MousePos.x >= panel_x - EDGE_GRAB_W &&
+                                        io.MousePos.x <= panel_x + EDGE_GRAB_W &&
+                                        io.MousePos.y >= vp->WorkPos.y &&
+                                        io.MousePos.y <= vp->WorkPos.y + panel_h;
+
+        if (python_console_hovering_edge_ && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            python_console_resizing_ = true;
+        if (python_console_resizing_ && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            python_console_resizing_ = false;
+        if (python_console_resizing_) {
+            const float max_console_w = vp->WorkSize.x * PYTHON_CONSOLE_MAX_RATIO;
+            python_console_width_ = std::clamp(python_console_width_ - io.MouseDelta.x,
+                                               PYTHON_CONSOLE_MIN_WIDTH, max_console_w);
+            updateViewportRegion();
+        }
+        if (python_console_hovering_edge_ || python_console_resizing_)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+
+        // Draw the docked console panel
+        const ImVec2 pos{panel_x, vp->WorkPos.y};
+        const ImVec2 size{python_console_width_, panel_h};
+        panels::DrawDockedPythonConsole(ctx, pos, size);
     }
 
-    void GuiManager::showZoomSpeedOverlay(const float zoom_speed, float /*max_zoom_speed*/) {
-        zoom_speed_ = zoom_speed;
-        zoom_speed_overlay_visible_ = true;
-        zoom_speed_overlay_start_time_ = std::chrono::steady_clock::now();
+    void GuiManager::renderPythonPanels([[maybe_unused]] const UIContext& ctx) {
+        lfs::vis::Scene* scene = nullptr;
+        if (auto* sm = ctx.viewer->getSceneManager()) {
+            scene = &sm->getScene();
+        }
+        python::draw_python_panels(python::PanelSpace::Floating, scene);
+        python::draw_python_panels(python::PanelSpace::ViewportOverlay, scene);
+        python::draw_python_modals(scene);
+        python::draw_python_popups(scene);
     }
 
     void GuiManager::triggerCropFlash() {
@@ -1653,8 +1934,8 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::deactivateAllTools() {
-        if (auto* const t = viewer_->getSelectionTool())
-            t->setEnabled(false);
+        // Selection tool is handled by Python operator - cancel it
+        python::cancel_active_operator();
         if (auto* const t = viewer_->getBrushTool())
             t->setEnabled(false);
         if (auto* const t = viewer_->getAlignTool())
@@ -1666,7 +1947,7 @@ namespace lfs::vis::gui {
 
         auto& editor = viewer_->getEditorContext();
         editor.setActiveTool(ToolType::None);
-        gizmo_toolbar_state_.current_operation = ImGuizmo::TRANSLATE;
+        current_operation_ = ImGuizmo::TRANSLATE;
     }
 
     void GuiManager::setupEventHandlers() {
@@ -1680,19 +1961,9 @@ namespace lfs::vis::gui {
             showWindow(e.window_name, e.show);
         });
 
-        cmd::ShowDatasetLoadPopup::when([this](const auto& e) {
-            std::filesystem::path output_dir = e.dataset_path;
-            if (std::filesystem::is_regular_file(output_dir)) {
-                output_dir = output_dir.parent_path();
-            }
-            if (save_directory_popup_) {
-                save_directory_popup_->show(output_dir);
-            }
-        });
-
         ui::NodeSelected::when([this](const auto&) {
-            if (auto* const t = viewer_->getSelectionTool())
-                t->setEnabled(false);
+            // Selection tool is handled by Python operator - cancel it
+            python::cancel_active_operator();
             if (auto* const t = viewer_->getBrushTool())
                 t->setEnabled(false);
             if (auto* const t = viewer_->getAlignTool())
@@ -1701,8 +1972,8 @@ namespace lfs::vis::gui {
                 sm->syncCropBoxToRenderSettings();
         });
         ui::NodeDeselected::when([this](const auto&) {
-            if (auto* const t = viewer_->getSelectionTool())
-                t->setEnabled(false);
+            // Selection tool is handled by Python operator - cancel it
+            python::cancel_active_operator();
             if (auto* const t = viewer_->getBrushTool())
                 t->setEnabled(false);
             if (auto* const t = viewer_->getAlignTool())
@@ -1711,18 +1982,86 @@ namespace lfs::vis::gui {
         state::PLYRemoved::when([this](const auto&) { deactivateAllTools(); });
         state::SceneCleared::when([this](const auto&) { deactivateAllTools(); });
 
-        // Handle speed change events
-        ui::SpeedChanged::when([this](const auto& e) {
-            showSpeedOverlay(e.current_speed, e.max_speed);
-        });
-
-        ui::ZoomSpeedChanged::when([this](const auto& e) {
-            showZoomSpeedOverlay(e.zoom_speed, e.max_zoom_speed);
+        cmd::GoToCamView::when([this](const auto& e) {
+            if (auto* sm = viewer_->getSceneManager()) {
+                const auto& scene = sm->getScene();
+                for (const auto* node : scene.getNodes()) {
+                    if (node->type == NodeType::CAMERA && node->camera_uid == e.cam_id) {
+                        ui::NodeSelected{.path = node->name, .type = "Camera", .metadata = {}}.emit();
+                        break;
+                    }
+                }
+            }
         });
 
         lfs::core::events::tools::SetToolbarTool::when([this](const auto& e) {
             auto& editor = viewer_->getEditorContext();
-            editor.setActiveTool(static_cast<ToolType>(e.tool_mode));
+            const auto tool = static_cast<ToolType>(e.tool_mode);
+
+            if (editor.hasActiveOperator() && tool != ToolType::Selection) {
+                python::cancel_active_operator();
+            }
+
+            editor.setActiveTool(tool);
+
+            static constexpr std::array<const char*, 8> TOOL_IDS = {
+                nullptr, "builtin.select", "builtin.translate", "builtin.rotate",
+                "builtin.scale", "builtin.brush", "builtin.align", "builtin.mirror"};
+            auto& registry = UnifiedToolRegistry::instance();
+            const auto idx = static_cast<size_t>(tool);
+            if (idx < TOOL_IDS.size() && TOOL_IDS[idx]) {
+                registry.setActiveTool(TOOL_IDS[idx]);
+            } else {
+                registry.clearActiveTool();
+            }
+
+            switch (tool) {
+            case ToolType::Translate:
+                current_operation_ = ImGuizmo::TRANSLATE;
+                LOG_INFO("SetToolbarTool: TRANSLATE");
+                break;
+            case ToolType::Rotate:
+                current_operation_ = ImGuizmo::ROTATE;
+                LOG_INFO("SetToolbarTool: ROTATE");
+                break;
+            case ToolType::Scale:
+                current_operation_ = ImGuizmo::SCALE;
+                LOG_INFO("SetToolbarTool: SCALE");
+                break;
+            case ToolType::Selection:
+                // Selection tool is handled natively in C++ via SelectionTool
+                break;
+            default:
+                LOG_INFO("SetToolbarTool: tool_mode={}", e.tool_mode);
+                break;
+            }
+            show_sequencer_ = false;
+        });
+
+        lfs::core::events::tools::SetSelectionSubMode::when([this](const auto& e) {
+            setSelectionSubMode(static_cast<SelectionSubMode>(e.selection_mode));
+
+            static constexpr std::array<const char*, 5> SUBMODE_IDS = {
+                "centers", "rectangle", "polygon", "lasso", "rings"};
+            const auto idx = static_cast<size_t>(e.selection_mode);
+            if (idx < SUBMODE_IDS.size()) {
+                UnifiedToolRegistry::instance().setActiveSubmode(SUBMODE_IDS[idx]);
+            }
+
+            if (auto* const tool = viewer_->getSelectionTool()) {
+                tool->onSelectionModeChanged();
+            }
+        });
+
+        lfs::core::events::tools::ExecuteMirror::when([this](const auto& e) {
+            auto* sm = viewer_->getSceneManager();
+            if (sm) {
+                sm->executeMirror(static_cast<lfs::core::MirrorAxis>(e.axis));
+            }
+        });
+
+        lfs::core::events::tools::CancelActiveOperator::when([](const auto&) {
+            lfs::python::cancel_active_operator();
         });
 
         cmd::ApplyCropBox::when([this](const auto&) {
@@ -1788,27 +2127,8 @@ namespace lfs::vis::gui {
             if (!node || !node->cropbox)
                 return;
 
-            // Capture state before toggle
-            const command::CropBoxState old_state{
-                .min = node->cropbox->min,
-                .max = node->cropbox->max,
-                .local_transform = node->local_transform.get(),
-                .inverse = node->cropbox->inverse};
-
-            // Toggle crop inverse
             node->cropbox->inverse = !node->cropbox->inverse;
             sm->getScene().invalidateCache();
-
-            // Capture state after toggle
-            const command::CropBoxState new_state{
-                .min = node->cropbox->min,
-                .max = node->cropbox->max,
-                .local_transform = node->local_transform.get(),
-                .inverse = node->cropbox->inverse};
-
-            auto cmd = std::make_unique<command::CropBoxCommand>(
-                sm, node->name, old_state, new_state);
-            viewer_->getCommandHistory().execute(std::move(cmd));
         });
 
         // Cycle: normal -> center markers -> rings -> normal
@@ -1829,7 +2149,7 @@ namespace lfs::vis::gui {
         });
 
         ui::FocusTrainingPanel::when([this](const auto&) {
-            focus_training_panel_ = true;
+            focus_panel_name_ = "Training";
         });
 
         ui::ToggleUI::when([this](const auto&) {
@@ -1842,17 +2162,56 @@ namespace lfs::vis::gui {
             }
         });
 
-        state::DiskSpaceSaveFailed::when([this](const auto& e) {
-            if (!e.is_disk_space_error) {
-                if (notification_popup_) {
-                    const std::string title = e.is_checkpoint ? "Checkpoint Save Failed" : "Export Failed";
-                    const std::string msg = e.is_checkpoint
-                                                ? std::format("Failed to save checkpoint at iteration {}:\n\n{}", e.iteration, e.error)
-                                                : std::format("Failed to export:\n\n{}", e.error);
-                    notification_popup_->show(NotificationPopup::Type::FAILURE, title, msg);
-                }
+        cmd::SequencerAddKeyframe::when([this](const auto&) {
+            const auto& cam = viewer_->getViewport().camera;
+            auto& timeline = sequencer_controller_.timeline();
+
+            // Use snap interval if enabled, otherwise default to 1.0f
+            const float interval = sequencer_ui_state_.snap_to_grid
+                                       ? sequencer_ui_state_.snap_interval
+                                       : 1.0f;
+            const float time = timeline.empty() ? 0.0f : timeline.endTime() + interval;
+
+            lfs::sequencer::Keyframe kf;
+            kf.time = time;
+            kf.position = cam.t;
+            kf.rotation = glm::quat_cast(cam.R);
+            kf.fov = lfs::sequencer::DEFAULT_FOV;
+            timeline.addKeyframe(kf);
+            sequencer_controller_.seek(time);
+        });
+
+        cmd::SequencerUpdateKeyframe::when([this](const auto&) {
+            if (!sequencer_controller_.hasSelection())
                 return;
-            }
+            const auto& cam = viewer_->getViewport().camera;
+            sequencer_controller_.updateSelectedKeyframe(
+                cam.t,
+                glm::quat_cast(cam.R),
+                lfs::sequencer::DEFAULT_FOV);
+        });
+
+        cmd::SequencerPlayPause::when([this](const auto&) {
+            sequencer_controller_.togglePlayPause();
+        });
+
+        cmd::SequencerExportVideo::when([this](const auto& evt) {
+            const auto path = SaveMp4FileDialog("camera_path");
+            if (path.empty())
+                return;
+
+            io::video::VideoExportOptions options;
+            options.width = evt.width;
+            options.height = evt.height;
+            options.framerate = evt.framerate;
+            options.crf = evt.crf;
+            startVideoExport(path, options);
+        });
+
+        state::DiskSpaceSaveFailed::when([this](const auto& e) {
+            // Non-disk-space errors are handled by notification_bridge.cpp
+            if (!e.is_disk_space_error)
+                return;
 
             if (!disk_space_error_dialog_)
                 return;
@@ -1916,17 +2275,20 @@ namespace lfs::vis::gui {
             }
         });
 
-        // Async dataset import
         cmd::LoadFile::when([this](const auto& cmd) {
             if (!cmd.is_dataset) {
                 return;
             }
             const auto* const data_loader = viewer_->getDataLoader();
             if (!data_loader) {
-                LOG_ERROR("No data loader service");
+                LOG_ERROR("LoadFile: no data loader");
                 return;
             }
-            startAsyncImport(cmd.path, data_loader->getParameters());
+            auto params = data_loader->getParameters();
+            if (!cmd.output_path.empty()) {
+                params.dataset.output_path = cmd.output_path;
+            }
+            startAsyncImport(cmd.path, params);
         });
 
         // Fallback sync import progress handlers
@@ -1971,63 +2333,85 @@ namespace lfs::vis::gui {
 
             // Focus training panel on successful dataset load
             if (e.success) {
-                focus_training_panel_ = true;
+                focus_panel_name_ = "Training";
             }
         });
 
-        // Focus training panel when trainer is ready (dataset or checkpoint loaded)
         internal::TrainerReady::when([this](const auto&) {
-            focus_training_panel_ = true;
+            focus_panel_name_ = "Training";
         });
     }
 
-    void GuiManager::setSelectionSubMode(panels::SelectionSubMode mode) {
-        if (viewer_->getEditorContext().getActiveTool() == ToolType::Selection) {
-            gizmo_toolbar_state_.selection_mode = mode;
+    void GuiManager::setSelectionSubMode(SelectionSubMode mode) {
+        selection_mode_ = mode;
+
+        // Also update RenderingManager immediately so Python get_active_submode() returns correct value
+        if (auto* rm = viewer_->getRenderingManager()) {
+            lfs::rendering::SelectionMode rm_mode = lfs::rendering::SelectionMode::Centers;
+            switch (mode) {
+            case SelectionSubMode::Centers: rm_mode = lfs::rendering::SelectionMode::Centers; break;
+            case SelectionSubMode::Rectangle: rm_mode = lfs::rendering::SelectionMode::Rectangle; break;
+            case SelectionSubMode::Polygon: rm_mode = lfs::rendering::SelectionMode::Polygon; break;
+            case SelectionSubMode::Lasso: rm_mode = lfs::rendering::SelectionMode::Lasso; break;
+            case SelectionSubMode::Rings: rm_mode = lfs::rendering::SelectionMode::Rings; break;
+            }
+            rm->setSelectionMode(rm_mode);
         }
     }
 
-    panels::ToolType GuiManager::getCurrentToolMode() const {
+    ToolType GuiManager::getCurrentToolMode() const {
         return viewer_->getEditorContext().getActiveTool();
     }
 
     bool GuiManager::isCapturingInput() const {
-        return menu_bar_ && menu_bar_->isCapturingInput();
+        if (auto* input_controller = viewer_->getInputController()) {
+            return input_controller->getBindings().isCapturing();
+        }
+        return false;
     }
 
     bool GuiManager::isModalWindowOpen() const {
-        // Check exit confirmation popup
-        if (exit_confirmation_popup_ && exit_confirmation_popup_->isOpen())
-            return true;
-
-        // Check save directory popup
-        if (save_directory_popup_ && save_directory_popup_->isOpen())
-            return true;
-
-        // Check export dialog
-        if (window_states_.contains("export_dialog") && window_states_.at("export_dialog"))
-            return true;
-
-        // Check menu bar dialog windows
-        if (!menu_bar_)
-            return false;
-
-        return menu_bar_->isInputSettingsOpen() ||
-               menu_bar_->isAboutWindowOpen() ||
-               menu_bar_->isGettingStartedWindowOpen() ||
-               menu_bar_->isDebugWindowOpen();
+        // Check any ImGui popup/modal (covers Python popups and floating panels)
+        return ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     }
 
     void GuiManager::captureKey(int key, int mods) {
-        if (menu_bar_) {
-            menu_bar_->captureKey(key, mods);
+        if (auto* input_controller = viewer_->getInputController()) {
+            input_controller->getBindings().captureKey(key, mods);
         }
     }
 
     void GuiManager::captureMouseButton(int button, int mods) {
-        if (menu_bar_) {
-            menu_bar_->captureMouseButton(button, mods);
+        if (auto* input_controller = viewer_->getInputController()) {
+            input_controller->getBindings().captureMouseButton(button, mods);
         }
+    }
+
+    void GuiManager::requestThumbnail(const std::string& video_id) {
+        if (menu_bar_) {
+            menu_bar_->requestThumbnail(video_id);
+        }
+    }
+
+    void GuiManager::processThumbnails() {
+        if (menu_bar_) {
+            menu_bar_->processThumbnails();
+        }
+    }
+
+    bool GuiManager::isThumbnailReady(const std::string& video_id) const {
+        return menu_bar_ ? menu_bar_->isThumbnailReady(video_id) : false;
+    }
+
+    uint64_t GuiManager::getThumbnailTexture(const std::string& video_id) const {
+        return menu_bar_ ? menu_bar_->getThumbnailTexture(video_id) : 0;
+    }
+
+    int GuiManager::getHighlightedCameraUid() const {
+        if (auto* sm = viewer_->getSceneManager()) {
+            return sm->getSelectedCameraUid();
+        }
+        return -1;
     }
 
     void GuiManager::applyDefaultStyle() {
@@ -2046,7 +2430,7 @@ namespace lfs::vis::gui {
 
     bool GuiManager::wantsInput() const {
         // Block all input while exporting
-        if (export_state_.active.load()) {
+        if (export_state_.active.load() || video_export_state_.active.load()) {
             return true;
         }
         ImGuiIO& io = ImGui::GetIO();
@@ -2062,6 +2446,13 @@ namespace lfs::vis::gui {
                ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) ||
                ImGui::GetIO().WantCaptureMouse ||
                ImGui::GetIO().WantCaptureKeyboard;
+    }
+
+    bool GuiManager::needsAnimationFrame() const {
+        if (video_extractor_dialog_ && video_extractor_dialog_->isVideoPlaying()) {
+            return true;
+        }
+        return false;
     }
 
     void GuiManager::setFileSelectedCallback(std::function<void(const std::filesystem::path&, bool)> callback) {
@@ -2115,13 +2506,13 @@ namespace lfs::vis::gui {
         const glm::vec3 translation = gizmo_ops::extractTranslation(world_transform);
 
         // Settings
-        const bool use_world_space = (gizmo_toolbar_state_.transform_space == panels::TransformSpace::World);
-        const ImGuizmo::OPERATION gizmo_op = gizmo_toolbar_state_.current_operation;
+        const bool use_world_space = (transform_space_ == TransformSpace::World);
+        const ImGuizmo::OPERATION gizmo_op = current_operation_;
 
         // Compute pivot based on pivot mode
         const glm::vec3 local_pivot = gizmo_ops::computeLocalPivot(
             scene_manager->getScene(), cropbox_id,
-            gizmo_toolbar_state_.pivot_mode, GizmoTargetType::CropBox);
+            pivot_mode_, GizmoTargetType::CropBox);
         const glm::vec3 pivot_world = translation + rotation * (local_pivot * world_scale);
 
         // Build gizmo matrix from frozen context during manipulation, live state otherwise
@@ -2193,11 +2584,6 @@ namespace lfs::vis::gui {
         if (is_using && !cropbox_gizmo_active_) {
             cropbox_gizmo_active_ = true;
             cropbox_node_name_ = cropbox_node->name;
-            cropbox_state_before_drag_ = command::CropBoxState{
-                .min = cropbox_node->cropbox->min,
-                .max = cropbox_node->cropbox->max,
-                .local_transform = cropbox_node->local_transform.get(),
-                .inverse = cropbox_node->cropbox->inverse};
 
             // Capture gizmo context with frozen pivot and original state
             gizmo_context_ = gizmo_ops::captureCropBox(
@@ -2205,8 +2591,8 @@ namespace lfs::vis::gui {
                 cropbox_node->name,
                 pivot_world,
                 local_pivot,
-                gizmo_toolbar_state_.transform_space,
-                gizmo_toolbar_state_.pivot_mode,
+                transform_space_,
+                pivot_mode_,
                 gizmo_op);
         }
 
@@ -2237,32 +2623,18 @@ namespace lfs::vis::gui {
             render_manager->markDirty();
         }
 
-        // Create undo command when manipulation ends
         if (!is_using && cropbox_gizmo_active_) {
             cropbox_gizmo_active_ = false;
             gizmo_context_.reset();
 
-            if (cropbox_state_before_drag_.has_value()) {
-                auto* node = scene_manager->getScene().getMutableNode(cropbox_node_name_);
-                if (node && node->cropbox) {
-                    const command::CropBoxState new_state{
-                        .min = node->cropbox->min,
-                        .max = node->cropbox->max,
-                        .local_transform = node->local_transform.get(),
-                        .inverse = node->cropbox->inverse};
-
-                    auto cmd = std::make_unique<command::CropBoxCommand>(
-                        scene_manager, cropbox_node_name_, *cropbox_state_before_drag_, new_state);
-                    viewer_->getCommandHistory().execute(std::move(cmd));
-
-                    using namespace lfs::core::events;
-                    ui::CropBoxChanged{
-                        .min_bounds = node->cropbox->min,
-                        .max_bounds = node->cropbox->max,
-                        .enabled = settings.use_crop_box}
-                        .emit();
-                }
-                cropbox_state_before_drag_.reset();
+            auto* node = scene_manager->getScene().getMutableNode(cropbox_node_name_);
+            if (node && node->cropbox) {
+                using namespace lfs::core::events;
+                ui::CropBoxChanged{
+                    .min_bounds = node->cropbox->min,
+                    .max_bounds = node->cropbox->max,
+                    .enabled = settings.use_crop_box}
+                    .emit();
             }
         }
 
@@ -2287,7 +2659,7 @@ namespace lfs::vis::gui {
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
 
         const auto& t = theme();
-        const float scale = getDpiScale();
+        const float scale = lfs::python::get_shared_dpi_scale();
         const float btn_size = t.sizes.toolbar_button_size * scale;
         const float spacing = t.sizes.toolbar_spacing * scale;
         const float padding = t.sizes.toolbar_padding * scale;
@@ -2308,23 +2680,21 @@ namespace lfs::vis::gui {
 
         if (ImGui::Begin("##CropGizmoMiniToolbar", nullptr, WINDOW_FLAGS)) {
             const ImVec2 btn_sz(btn_size, btn_size);
-            const auto& state = gizmo_toolbar_state_;
 
-            const auto button = [&](const char* id, const unsigned int tex, const ImGuizmo::OPERATION op,
-                                    const char* fallback, const char* tip) {
-                if (widgets::IconButton(id, tex, btn_sz, state.current_operation == op, fallback)) {
-                    gizmo_toolbar_state_.current_operation = op;
+            const auto button = [&](const char* id, const ImGuizmo::OPERATION op, const char* label, const char* tip) {
+                if (widgets::IconButton(id, 0, btn_sz, current_operation_ == op, label)) {
+                    current_operation_ = op;
                 }
                 if (ImGui::IsItemHovered()) {
                     widgets::SetThemedTooltip("%s", tip);
                 }
             };
 
-            button("##mini_t", state.translation_texture, ImGuizmo::TRANSLATE, "T", "Translate (T)");
+            button("##mini_t", ImGuizmo::TRANSLATE, "T", "Translate (T)");
             ImGui::SameLine();
-            button("##mini_r", state.rotation_texture, ImGuizmo::ROTATE, "R", "Rotate (R)");
+            button("##mini_r", ImGuizmo::ROTATE, "R", "Rotate (R)");
             ImGui::SameLine();
-            button("##mini_s", state.scaling_texture, ImGuizmo::SCALE, "S", "Scale (S)");
+            button("##mini_s", ImGuizmo::SCALE, "S", "Scale (S)");
         }
         ImGui::End();
 
@@ -2374,8 +2744,8 @@ namespace lfs::vis::gui {
         const glm::vec3 translation = gizmo_ops::extractTranslation(world_transform);
 
         // Settings
-        const bool use_world_space = (gizmo_toolbar_state_.transform_space == panels::TransformSpace::World);
-        const ImGuizmo::OPERATION gizmo_op = gizmo_toolbar_state_.current_operation;
+        const bool use_world_space = (transform_space_ == TransformSpace::World);
+        const ImGuizmo::OPERATION gizmo_op = current_operation_;
 
         // Ellipsoid pivot is always at center (origin in local space)
         const glm::vec3 local_pivot(0.0f);
@@ -2450,10 +2820,6 @@ namespace lfs::vis::gui {
         if (is_using && !ellipsoid_gizmo_active_) {
             ellipsoid_gizmo_active_ = true;
             ellipsoid_node_name_ = ellipsoid_node->name;
-            ellipsoid_state_before_drag_ = command::EllipsoidState{
-                .radii = ellipsoid_node->ellipsoid->radii,
-                .local_transform = ellipsoid_node->local_transform.get(),
-                .inverse = ellipsoid_node->ellipsoid->inverse};
 
             // Capture gizmo context with frozen pivot and original state
             gizmo_context_ = gizmo_ops::captureEllipsoid(
@@ -2461,8 +2827,8 @@ namespace lfs::vis::gui {
                 ellipsoid_node->name,
                 pivot_world,
                 local_pivot,
-                gizmo_toolbar_state_.transform_space,
-                gizmo_toolbar_state_.pivot_mode,
+                transform_space_,
+                pivot_mode_,
                 gizmo_op);
         }
 
@@ -2493,30 +2859,17 @@ namespace lfs::vis::gui {
             render_manager->markDirty();
         }
 
-        // Create undo command when manipulation ends
         if (!is_using && ellipsoid_gizmo_active_) {
             ellipsoid_gizmo_active_ = false;
             gizmo_context_.reset();
 
-            if (ellipsoid_state_before_drag_.has_value()) {
-                auto* node = scene_manager->getScene().getMutableNode(ellipsoid_node_name_);
-                if (node && node->ellipsoid) {
-                    const command::EllipsoidState new_state{
-                        .radii = node->ellipsoid->radii,
-                        .local_transform = node->local_transform.get(),
-                        .inverse = node->ellipsoid->inverse};
-
-                    auto cmd = std::make_unique<command::EllipsoidCommand>(
-                        scene_manager, ellipsoid_node_name_, *ellipsoid_state_before_drag_, new_state);
-                    viewer_->getCommandHistory().execute(std::move(cmd));
-
-                    using namespace lfs::core::events;
-                    ui::EllipsoidChanged{
-                        .radii = node->ellipsoid->radii,
-                        .enabled = settings.use_ellipsoid}
-                        .emit();
-                }
-                ellipsoid_state_before_drag_.reset();
+            auto* node = scene_manager->getScene().getMutableNode(ellipsoid_node_name_);
+            if (node && node->ellipsoid) {
+                using namespace lfs::core::events;
+                ui::EllipsoidChanged{
+                    .radii = node->ellipsoid->radii,
+                    .enabled = settings.use_ellipsoid}
+                    .emit();
             }
         }
 
@@ -2573,10 +2926,9 @@ namespace lfs::vis::gui {
         const glm::mat4 projection = lfs::rendering::createProjectionMatrixFromFocal(
             vp_size, settings.focal_length_mm, settings.orthographic, settings.ortho_scale);
 
-        const bool use_world_space =
-            (gizmo_toolbar_state_.transform_space == panels::TransformSpace::World) || is_multi_selection;
+        const bool use_world_space = (transform_space_ == TransformSpace::World) || is_multi_selection;
 
-        const glm::vec3 local_pivot = (gizmo_toolbar_state_.pivot_mode == panels::PivotMode::Origin)
+        const glm::vec3 local_pivot = (pivot_mode_ == PivotMode::Origin)
                                           ? glm::vec3(0.0f)
                                           : scene_manager->getSelectionCenter();
 
@@ -2841,17 +3193,10 @@ namespace lfs::vis::gui {
             }
 
             if (any_changed) {
-                if (count == 1) {
-                    auto cmd = std::make_unique<command::TransformCommand>(
-                        node_gizmo_node_names_[0],
-                        node_transforms_before_drag_[0], final_transforms[0]);
-                    services().commands().execute(std::move(cmd));
-                } else {
-                    auto cmd = std::make_unique<command::MultiTransformCommand>(
-                        node_gizmo_node_names_,
-                        node_transforms_before_drag_, std::move(final_transforms));
-                    services().commands().execute(std::move(cmd));
-                }
+                op::OperatorProperties props;
+                props.set("node_names", node_gizmo_node_names_);
+                props.set("old_transforms", node_transforms_before_drag_);
+                op::operators().invoke(op::BuiltinOp::TransformApplyBatch, &props);
             }
         }
 
@@ -2887,6 +3232,38 @@ namespace lfs::vis::gui {
         }
 
         overlay_drawlist->PopClipRect();
+    }
+
+    void GuiManager::performExport(ExportFormat format, const std::filesystem::path& path,
+                                   const std::vector<std::string>& node_names, int sh_degree) {
+        if (isExporting())
+            return;
+
+        auto* const scene_manager = viewer_->getSceneManager();
+        if (!scene_manager || node_names.empty())
+            return;
+
+        const auto& scene = scene_manager->getScene();
+        std::vector<std::pair<const lfs::core::SplatData*, glm::mat4>> splats;
+        splats.reserve(node_names.size());
+        for (const auto& name : node_names) {
+            const auto* node = scene.getNode(name);
+            if (node && node->type == NodeType::SPLAT && node->model) {
+                splats.emplace_back(node->model.get(), scene.getWorldTransform(node->id));
+            }
+        }
+        if (splats.empty())
+            return;
+
+        auto merged = Scene::mergeSplatsWithTransforms(splats);
+        if (!merged)
+            return;
+
+        if (sh_degree < merged->get_max_sh_degree()) {
+            truncateSHDegree(*merged, sh_degree);
+        }
+
+        startAsyncExport(format, path, std::move(merged));
     }
 
     void GuiManager::startAsyncExport(ExportFormat format,
@@ -2957,14 +3334,14 @@ namespace lfs::vis::gui {
                     break;
                 }
                 case ExportFormat::SOG: {
-                    const lfs::core::SogWriteOptions options{
-                        .iterations = 10,
+                    const lfs::io::SogSaveOptions options{
                         .output_path = path,
+                        .kmeans_iterations = 10,
                         .progress_callback = update_progress};
-                    if (auto result = lfs::core::write_sog(*splat_data, options); result) {
+                    if (auto result = lfs::io::save_sog(*splat_data, options); result) {
                         success = true;
                     } else {
-                        error_msg = result.error();
+                        error_msg = result.error().message;
                     }
                     break;
                 }
@@ -3086,7 +3463,7 @@ namespace lfs::vis::gui {
                             import_state_.num_points = data->size();
                             import_state_.num_images = 0;
                         } else if constexpr (std::is_same_v<T, lfs::io::LoadedScene>) {
-                            import_state_.num_images = data.cameras ? data.cameras->size() : 0;
+                            import_state_.num_images = data.cameras.size();
                             import_state_.num_points = data.point_cloud ? data.point_cloud->size() : 0;
                         }
                     },
@@ -3178,386 +3555,166 @@ namespace lfs::vis::gui {
             .emit();
     }
 
-    void GuiManager::renderExportOverlay() {
-        if (!export_state_.active.load()) {
-            if (export_state_.thread && export_state_.thread->joinable()) {
-                export_state_.thread->join();
-                export_state_.thread.reset();
-            }
+    void GuiManager::cancelVideoExport() {
+        if (!video_export_state_.active.load())
             return;
-        }
 
-        const float scale = getDpiScale();
-        const float OVERLAY_WIDTH = 350.0f * scale;
-        const float OVERLAY_HEIGHT = 100.0f * scale;
-        const float BUTTON_WIDTH = 100.0f * scale;
-        const float BUTTON_HEIGHT = 30.0f * scale;
-        const float PROGRESS_BAR_HEIGHT = 20.0f * scale;
-
-        // Center in 3D viewport, not the main window
-        const ImVec2 overlay_pos(
-            viewport_pos_.x + (viewport_size_.x - OVERLAY_WIDTH) * 0.5f,
-            viewport_pos_.y + (viewport_size_.y - OVERLAY_HEIGHT) * 0.5f);
-
-        ImGui::SetNextWindowPos(overlay_pos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(OVERLAY_WIDTH, 0), ImGuiCond_Always);
-
-        constexpr ImGuiWindowFlags FLAGS = ImGuiWindowFlags_NoTitleBar |
-                                           ImGuiWindowFlags_NoResize |
-                                           ImGuiWindowFlags_NoMove |
-                                           ImGuiWindowFlags_NoScrollbar |
-                                           ImGuiWindowFlags_NoCollapse |
-                                           ImGuiWindowFlags_AlwaysAutoResize;
-
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 0.95f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * scale, 15 * scale));
-
-        if (ImGui::Begin("##ExportProgress", nullptr, FLAGS)) {
-            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-            {
-                const std::lock_guard lock(export_state_.mutex);
-                const char* format_name = "file";
-                switch (export_state_.format) {
-                case ExportFormat::PLY: format_name = "PLY"; break;
-                case ExportFormat::SOG: format_name = "SOG"; break;
-                case ExportFormat::SPZ: format_name = "SPZ"; break;
-                case ExportFormat::HTML_VIEWER: format_name = "HTML"; break;
-                }
-                ImGui::Text(LOC(lichtfeld::Strings::Progress::EXPORTING), format_name);
-            }
-            ImGui::PopFont();
-
-            ImGui::Spacing();
-
-            const float progress = export_state_.progress.load();
-            ImGui::ProgressBar(progress, ImVec2(-1, PROGRESS_BAR_HEIGHT), "");
-
-            ImGui::Text("%.0f%%", progress * 100.0f);
-            ImGui::SameLine();
-
-            {
-                const std::lock_guard lock(export_state_.mutex);
-                ImGui::TextUnformatted(export_state_.stage.c_str());
-            }
-
-            ImGui::Spacing();
-
-            ImGui::SetCursorPosX((OVERLAY_WIDTH - BUTTON_WIDTH) * 0.5f - ImGui::GetStyle().WindowPadding.x);
-            if (ImGui::Button(LOC(lichtfeld::Strings::Common::CANCEL), ImVec2(BUTTON_WIDTH, BUTTON_HEIGHT))) {
-                cancelExport();
-            }
-
-            ImGui::End();
-        }
-
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor();
-
-        // Dim viewport background during export
-        ImDrawList* const draw_list = ImGui::GetBackgroundDrawList();
-        draw_list->AddRectFilled(
-            viewport_pos_,
-            ImVec2(viewport_pos_.x + viewport_size_.x,
-                   viewport_pos_.y + viewport_size_.y),
-            IM_COL32(0, 0, 0, 100));
-    }
-
-    void GuiManager::renderImportOverlay() {
-        const bool is_active = import_state_.active.load();
-        const bool show_completion = import_state_.show_completion.load();
-
-        // Auto-hide completion after 2 seconds
-        if (show_completion && !is_active) {
-            std::chrono::steady_clock::time_point completion_time;
-            {
-                const std::lock_guard lock(import_state_.mutex);
-                completion_time = import_state_.completion_time;
-            }
-            if (std::chrono::steady_clock::now() - completion_time > std::chrono::seconds(2)) {
-                import_state_.show_completion.store(false);
-                return;
-            }
-        }
-
-        if (!is_active && !show_completion) {
-            return;
-        }
-
-        const float scale = getDpiScale();
-        const float overlay_width = 400.0f * scale;
-        const float progress_bar_height = 20.0f * scale;
-        const float btn_width = 80.0f * scale;
-        const float btn_height = 28.0f * scale;
-
-        const ImVec2 overlay_pos(
-            viewport_pos_.x + (viewport_size_.x - overlay_width) * 0.5f,
-            viewport_pos_.y + viewport_size_.y * 0.4f);
-
-        ImGui::SetNextWindowPos(overlay_pos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(overlay_width, 0), ImGuiCond_Always);
-
-        constexpr ImGuiWindowFlags OVERLAY_FLAGS = ImGuiWindowFlags_NoTitleBar |
-                                                   ImGuiWindowFlags_NoResize |
-                                                   ImGuiWindowFlags_NoMove |
-                                                   ImGuiWindowFlags_NoScrollbar |
-                                                   ImGuiWindowFlags_NoCollapse |
-                                                   ImGuiWindowFlags_AlwaysAutoResize;
-
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 0.95f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * scale, 15.0f * scale));
-
-        if (ImGui::Begin("##ImportProgress", nullptr, OVERLAY_FLAGS)) {
-            std::string dataset_type, stage, path_str, error;
-            size_t num_images = 0, num_points = 0;
-            bool success = false;
-            {
-                const std::lock_guard lock(import_state_.mutex);
-                dataset_type = import_state_.dataset_type;
-                stage = import_state_.stage;
-                path_str = lfs::core::path_to_utf8(import_state_.path.filename());
-                num_images = import_state_.num_images;
-                num_points = import_state_.num_points;
-                success = import_state_.success;
-                error = import_state_.error;
-            }
-
-            // Title
-            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-            if (show_completion && !is_active) {
-                constexpr ImVec4 GREEN(0.4f, 0.9f, 0.4f, 1.0f);
-                constexpr ImVec4 RED(1.0f, 0.4f, 0.4f, 1.0f);
-                ImGui::TextColored(success ? GREEN : RED,
-                                   success ? LOC(lichtfeld::Strings::Progress::IMPORT_COMPLETE_TITLE)
-                                           : LOC(lichtfeld::Strings::Progress::IMPORT_FAILED_TITLE));
-            } else {
-                const char* type = dataset_type.empty() ? "dataset" : dataset_type.c_str();
-                ImGui::Text(LOC(lichtfeld::Strings::Progress::IMPORTING), type);
-            }
-            ImGui::PopFont();
-
-            ImGui::Spacing();
-            if (!path_str.empty()) {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Path: %s", path_str.c_str());
-            }
-            ImGui::Spacing();
-
-            const float progress = import_state_.progress.load();
-            ImGui::ProgressBar(progress, ImVec2(-1, progress_bar_height), "");
-
-            if (is_active) {
-                ImGui::Text("%.0f%%", progress * 100.0f);
-                ImGui::SameLine();
-                ImGui::TextUnformatted(stage.c_str());
-            }
-
-            if (show_completion && (num_images > 0 || num_points > 0)) {
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f),
-                                   "%zu images, %zu points", num_images, num_points);
-            }
-
-            if (!error.empty()) {
-                ImGui::Spacing();
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + overlay_width - ImGui::GetStyle().WindowPadding.x * 2.0f);
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", error.c_str());
-                ImGui::PopTextWrapPos();
-            }
-
-            if (show_completion && !is_active) {
-                ImGui::Spacing();
-                ImGui::SetCursorPosX((overlay_width - btn_width) * 0.5f - ImGui::GetStyle().WindowPadding.x);
-                if (ImGui::Button(LOC(lichtfeld::Strings::Common::OK), ImVec2(btn_width, btn_height))) {
-                    import_state_.show_completion.store(false);
-                }
-            }
-            ImGui::End();
-        }
-
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor();
-
-        if (is_active) {
-            ImGui::GetBackgroundDrawList()->AddRectFilled(
-                viewport_pos_,
-                ImVec2(viewport_pos_.x + viewport_size_.x, viewport_pos_.y + viewport_size_.y),
-                IM_COL32(0, 0, 0, 100));
+        LOG_INFO("Cancelling video export");
+        video_export_state_.cancel_requested.store(true);
+        if (video_export_state_.thread) {
+            video_export_state_.thread->request_stop();
         }
     }
 
-    void GuiManager::renderEmptyStateOverlay() {
-        const auto* const scene_manager = viewer_->getSceneManager();
-        if (!scene_manager || !scene_manager->isEmpty() || drag_drop_hovering_)
+    void GuiManager::startVideoExport(const std::filesystem::path& path,
+                                      const io::video::VideoExportOptions& options) {
+        auto* const scene_manager = viewer_->getSceneManager();
+        auto* const rendering_manager = viewer_->getRenderingManager();
+        if (!scene_manager || !rendering_manager) {
+            LOG_ERROR("Cannot export video: missing components");
             return;
-        if (viewport_size_.x < 200.0f || viewport_size_.y < 200.0f)
-            return;
-
-        static constexpr float ZONE_PADDING = 120.0f;
-        static constexpr float DASH_LENGTH = 12.0f;
-        static constexpr float GAP_LENGTH = 8.0f;
-        static constexpr float BORDER_THICKNESS = 2.0f;
-        static constexpr float ICON_SIZE = 48.0f;
-        static constexpr float ANIM_SPEED = 30.0f;
-        const auto& t = theme();
-        const ImU32 border_color = t.overlay_border_u32();
-        const ImU32 icon_color = t.overlay_icon_u32();
-        const ImU32 title_color = t.overlay_text_u32();
-        const ImU32 subtitle_color = t.overlay_hint_u32();
-        const ImU32 hint_color = toU32WithAlpha(t.overlay.text_dim, 0.5f);
-
-        ImDrawList* const draw_list = ImGui::GetBackgroundDrawList();
-        const float center_x = viewport_pos_.x + viewport_size_.x * 0.5f;
-        const float center_y = viewport_pos_.y + viewport_size_.y * 0.5f;
-        const ImVec2 zone_min(viewport_pos_.x + ZONE_PADDING, viewport_pos_.y + ZONE_PADDING);
-        const ImVec2 zone_max(viewport_pos_.x + viewport_size_.x - ZONE_PADDING,
-                              viewport_pos_.y + viewport_size_.y - ZONE_PADDING);
-
-        const float time = static_cast<float>(ImGui::GetTime());
-        const float dash_offset = std::fmod(time * ANIM_SPEED, DASH_LENGTH + GAP_LENGTH);
-
-        // Dashed border
-        const auto drawDashedLine = [&](const ImVec2& start, const ImVec2& end) {
-            const float dx = end.x - start.x;
-            const float dy = end.y - start.y;
-            const float length = std::sqrt(dx * dx + dy * dy);
-            const float nx = dx / length;
-            const float ny = dy / length;
-            for (float pos = -dash_offset; pos < length; pos += DASH_LENGTH + GAP_LENGTH) {
-                const float d0 = std::max(0.0f, pos);
-                const float d1 = std::min(length, pos + DASH_LENGTH);
-                if (d1 > d0) {
-                    draw_list->AddLine(ImVec2(start.x + nx * d0, start.y + ny * d0),
-                                       ImVec2(start.x + nx * d1, start.y + ny * d1),
-                                       border_color, BORDER_THICKNESS);
-                }
-            }
-        };
-        drawDashedLine(zone_min, {zone_max.x, zone_min.y});
-        drawDashedLine({zone_max.x, zone_min.y}, zone_max);
-        drawDashedLine(zone_max, {zone_min.x, zone_max.y});
-        drawDashedLine({zone_min.x, zone_max.y}, zone_min);
-
-        const float icon_y = center_y - 50.0f;
-        draw_list->AddRect({center_x - ICON_SIZE * 0.5f, icon_y - ICON_SIZE * 0.3f},
-                           {center_x + ICON_SIZE * 0.5f, icon_y + ICON_SIZE * 0.4f},
-                           icon_color, 4.0f, 0, 2.0f);
-        draw_list->AddLine({center_x - ICON_SIZE * 0.5f, icon_y - ICON_SIZE * 0.3f},
-                           {center_x - ICON_SIZE * 0.2f, icon_y - ICON_SIZE * 0.5f}, icon_color, 2.0f);
-        draw_list->AddLine({center_x - ICON_SIZE * 0.2f, icon_y - ICON_SIZE * 0.5f},
-                           {center_x + ICON_SIZE * 0.1f, icon_y - ICON_SIZE * 0.5f}, icon_color, 2.0f);
-        draw_list->AddLine({center_x + ICON_SIZE * 0.1f, icon_y - ICON_SIZE * 0.5f},
-                           {center_x + ICON_SIZE * 0.2f, icon_y - ICON_SIZE * 0.3f}, icon_color, 2.0f);
-
-        // Text
-        const auto calcTextSize = [this](const char* text, ImFont* font) {
-            if (font)
-                ImGui::PushFont(font);
-            const ImVec2 size = ImGui::CalcTextSize(text);
-            if (font)
-                ImGui::PopFont();
-            return size;
-        };
-
-        const char* title = LOC(lichtfeld::Strings::Startup::DROP_FILES_TITLE);
-        const char* subtitle = LOC(lichtfeld::Strings::Startup::DROP_FILES_SUBTITLE);
-        const char* hint = LOC(lichtfeld::Strings::Startup::DROP_FILES_HINT);
-
-        const ImVec2 title_size = calcTextSize(title, font_heading_);
-        const ImVec2 subtitle_size = calcTextSize(subtitle, font_bold_);
-        const ImVec2 hint_size = calcTextSize(hint, font_heading_);
-
-        if (font_heading_)
-            ImGui::PushFont(font_heading_);
-        draw_list->AddText({center_x - title_size.x * 0.5f, center_y + 10.0f}, title_color, title);
-        if (font_heading_)
-            ImGui::PopFont();
-
-        if (font_bold_)
-            ImGui::PushFont(font_bold_);
-        draw_list->AddText({center_x - subtitle_size.x * 0.5f, center_y + 40.0f}, subtitle_color, subtitle);
-        if (font_bold_)
-            ImGui::PopFont();
-
-        if (font_heading_)
-            ImGui::PushFont(font_heading_);
-        draw_list->AddText({center_x - hint_size.x * 0.5f, center_y + 70.0f}, hint_color, hint);
-        if (font_heading_)
-            ImGui::PopFont();
-    }
-
-    void GuiManager::renderDragDropOverlay() {
-        if (!drag_drop_hovering_)
-            return;
-
-        static constexpr float INSET = 30.0f;
-        static constexpr float CORNER_RADIUS = 16.0f;
-        static constexpr float GLOW_MAX = 8.0f;
-        static constexpr float PULSE_SPEED = 3.0f;
-        static constexpr float BOUNCE_SPEED = 4.0f;
-        static constexpr float BOUNCE_AMOUNT = 5.0f;
-        const auto& t = theme();
-        const ImU32 overlay_color = toU32WithAlpha(t.palette.primary_dim, 0.7f);
-        const ImU32 fill_color = toU32WithAlpha(t.palette.primary, 0.23f);
-        const ImU32 icon_color = t.overlay_text_u32();
-        const ImU32 title_color = t.overlay_text_u32();
-        const ImU32 subtitle_color = t.overlay_hint_u32();
-
-        const ImGuiViewport* const vp = ImGui::GetMainViewport();
-        ImDrawList* const draw_list = ImGui::GetForegroundDrawList();
-        const ImVec2 win_max(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
-        const ImVec2 zone_min(vp->WorkPos.x + INSET, vp->WorkPos.y + INSET);
-        const ImVec2 zone_max(win_max.x - INSET, win_max.y - INSET);
-        const float center_x = vp->WorkPos.x + vp->WorkSize.x * 0.5f;
-        const float center_y = vp->WorkPos.y + vp->WorkSize.y * 0.5f;
-
-        const float time = static_cast<float>(ImGui::GetTime());
-        const float pulse = 0.5f + 0.5f * std::sin(time * PULSE_SPEED);
-
-        draw_list->AddRectFilled(vp->WorkPos, win_max, overlay_color);
-
-        const ImU32 glow_color = toU32WithAlpha(t.palette.primary, 0.16f * pulse);
-        for (float i = GLOW_MAX; i > 0.0f; i -= 2.0f) {
-            draw_list->AddRect({zone_min.x - i, zone_min.y - i}, {zone_max.x + i, zone_max.y + i},
-                               glow_color, CORNER_RADIUS + i, 0, 2.0f);
         }
 
-        const float border_alpha = 0.7f + 0.3f * pulse;
-        draw_list->AddRect(zone_min, zone_max, toU32WithAlpha(t.palette.primary, border_alpha), CORNER_RADIUS, 0, 3.0f);
-        draw_list->AddRectFilled(zone_min, zone_max, fill_color, CORNER_RADIUS);
+        const auto& timeline = sequencer_controller_.timeline();
+        if (timeline.empty()) {
+            LOG_ERROR("Cannot export video: no keyframes");
+            return;
+        }
 
-        const float arrow_y = center_y - 60.0f + BOUNCE_AMOUNT * std::sin(time * BOUNCE_SPEED);
-        draw_list->AddTriangleFilled({center_x, arrow_y + 25.0f}, {center_x - 20.0f, arrow_y},
-                                     {center_x + 20.0f, arrow_y}, icon_color);
-        draw_list->AddRectFilled({center_x - 8.0f, arrow_y - 25.0f}, {center_x + 8.0f, arrow_y}, icon_color, 2.0f);
+        // Get scene render state
+        const auto render_state = scene_manager->buildRenderState();
+        if (!render_state.combined_model) {
+            LOG_ERROR("No splat data to render");
+            return;
+        }
 
-        // Text
-        const auto calcTextSize = [this](const char* text, ImFont* font) {
-            if (font)
-                ImGui::PushFont(font);
-            const ImVec2 size = ImGui::CalcTextSize(text);
-            if (font)
-                ImGui::PopFont();
-            return size;
-        };
+        // Get rendering engine
+        auto* const engine = rendering_manager->getRenderingEngine();
+        if (!engine) {
+            LOG_ERROR("Rendering engine not available");
+            return;
+        }
 
-        const char* title = LOC(lichtfeld::Strings::Startup::DROP_TO_IMPORT);
-        const char* subtitle = LOC(lichtfeld::Strings::Startup::DROP_TO_IMPORT_SUBTITLE);
+        const float duration = timeline.duration();
+        const int total_frames = static_cast<int>(std::ceil(duration * options.framerate)) + 1;
+        const int width = options.width;
+        const int height = options.height;
 
-        const ImVec2 title_size = calcTextSize(title, font_heading_);
-        const ImVec2 subtitle_size = calcTextSize(subtitle, font_small_);
+        video_export_state_.active.store(true);
+        video_export_state_.cancel_requested.store(false);
+        video_export_state_.progress.store(0.0f);
+        video_export_state_.total_frames.store(total_frames);
+        video_export_state_.current_frame.store(0);
+        {
+            std::lock_guard lock(video_export_state_.mutex);
+            video_export_state_.stage = "Initializing";
+            video_export_state_.error.clear();
+        }
 
-        if (font_heading_)
-            ImGui::PushFont(font_heading_);
-        draw_list->AddText({center_x - title_size.x * 0.5f, center_y + 5.0f}, title_color, title);
-        if (font_heading_)
-            ImGui::PopFont();
+        LOG_INFO("Starting video export: {} frames at {}x{}", total_frames, width, height);
 
-        if (font_small_)
-            ImGui::PushFont(font_small_);
-        draw_list->AddText({center_x - subtitle_size.x * 0.5f, center_y + 35.0f}, subtitle_color, subtitle);
-        if (font_small_)
-            ImGui::PopFont();
+        // Capture settings from rendering manager
+        const auto render_settings = rendering_manager->getSettings();
+        const lfs::core::SplatData* splat_ptr = render_state.combined_model;
+
+        video_export_state_.thread = std::make_unique<std::jthread>(
+            [this, path, options, total_frames, width, height,
+             splat_ptr, engine, render_settings](std::stop_token stop_token) {
+                io::video::VideoEncoder encoder;
+
+                {
+                    std::lock_guard lock(video_export_state_.mutex);
+                    video_export_state_.stage = "Opening encoder";
+                }
+
+                auto result = encoder.open(path, options);
+                if (!result) {
+                    std::lock_guard lock(video_export_state_.mutex);
+                    video_export_state_.error = result.error();
+                    video_export_state_.stage = "Failed: " + result.error();
+                    video_export_state_.active.store(false);
+                    LOG_ERROR("Failed to open encoder: {}", result.error());
+                    return;
+                }
+
+                const float start_time = sequencer_controller_.timeline().startTime();
+                const float time_step = 1.0f / static_cast<float>(options.framerate);
+
+                for (int frame = 0; frame < total_frames; ++frame) {
+                    if (stop_token.stop_requested() || video_export_state_.cancel_requested.load()) {
+                        LOG_INFO("Video export cancelled at frame {}", frame);
+                        break;
+                    }
+
+                    const float time = start_time + static_cast<float>(frame) * time_step;
+                    const auto cam_state = sequencer_controller_.timeline().evaluate(time);
+
+                    // Create render request
+                    rendering::RenderRequest request;
+                    request.viewport.rotation = glm::mat3_cast(cam_state.rotation);
+                    request.viewport.translation = cam_state.position;
+                    request.viewport.size = {width, height};
+                    request.viewport.focal_length_mm = lfs::rendering::vFovToFocalLength(cam_state.fov);
+                    request.background_color = render_settings.background_color;
+                    request.sh_degree = render_settings.sh_degree;
+                    request.scaling_modifier = render_settings.scaling_modifier;
+                    request.antialiasing = true;
+
+                    auto render_result = engine->renderGaussians(*splat_ptr, request);
+                    if (!render_result.has_value() || !render_result->valid || !render_result->image) {
+                        LOG_ERROR("Failed to render frame {}", frame);
+                        continue;
+                    }
+
+                    // Convert from CHW (channel-first) to HWC (height-width-channel) for video encoding
+                    // Renderer outputs [C, H, W], encoder expects [H, W, C]
+                    auto image_hwc = render_result->image->permute({1, 2, 0}).contiguous();
+
+                    // Debug: log tensor info on first frame
+                    if (frame == 0) {
+                        LOG_INFO("Video export: CHW shape=[{},{},{}] -> HWC shape=[{},{},{}]",
+                                 render_result->image->shape()[0], render_result->image->shape()[1], render_result->image->shape()[2],
+                                 image_hwc.shape()[0], image_hwc.shape()[1], image_hwc.shape()[2]);
+                    }
+
+                    // Encode directly from GPU (NVENC or CUDA color convert + x264)
+                    const auto* const gpu_ptr = image_hwc.data_ptr();
+                    auto write_result = encoder.writeFrameGpu(gpu_ptr, width, height, nullptr);
+                    if (!write_result) {
+                        std::lock_guard lock(video_export_state_.mutex);
+                        video_export_state_.error = write_result.error();
+                        video_export_state_.stage = "Encode error";
+                        LOG_ERROR("Failed to encode frame {}: {}", frame, write_result.error());
+                        break;
+                    }
+
+                    video_export_state_.current_frame.store(frame + 1);
+                    video_export_state_.progress.store(
+                        static_cast<float>(frame + 1) / static_cast<float>(total_frames));
+                    {
+                        std::lock_guard lock(video_export_state_.mutex);
+                        video_export_state_.stage = std::format("Encoding frame {}/{}", frame + 1, total_frames);
+                    }
+                }
+
+                {
+                    std::lock_guard lock(video_export_state_.mutex);
+                    video_export_state_.stage = "Finalizing";
+                }
+
+                if (auto close_result = encoder.close(); !close_result) {
+                    std::lock_guard lock(video_export_state_.mutex);
+                    video_export_state_.error = close_result.error();
+                    video_export_state_.stage = "Failed";
+                    LOG_ERROR("Failed to close encoder: {}", close_result.error());
+                } else if (video_export_state_.error.empty() && !video_export_state_.cancel_requested.load()) {
+                    std::lock_guard lock(video_export_state_.mutex);
+                    video_export_state_.stage = "Complete";
+                    LOG_INFO("Video export completed: {}", path.string());
+                }
+
+                video_export_state_.active.store(false);
+            });
     }
 
     void GuiManager::renderStartupOverlay() {
@@ -3677,7 +3834,7 @@ namespace lfs::vis::gui {
             ImGui::SameLine(0.0f, 8.0f);
             ImGui::SetNextItemWidth(LANG_COMBO_WIDTH);
 
-            auto& loc = lichtfeld::LocalizationManager::getInstance();
+            auto& loc = lfs::event::LocalizationManager::getInstance();
             const auto& current_lang = loc.getCurrentLanguage();
             const auto available_langs = loc.getAvailableLanguages();
             const auto lang_names = loc.getAvailableLanguageNames();
@@ -3718,8 +3875,6 @@ namespace lfs::vis::gui {
 
         // Dismiss on user interaction (but not when interacting with language combo or modals)
         const auto& io = ImGui::GetIO();
-        const bool modal_open = (save_directory_popup_ && save_directory_popup_->isOpen()) ||
-                                (exit_confirmation_popup_ && exit_confirmation_popup_->isOpen());
         const bool mouse_action = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
                                   ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
                                   ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
@@ -3732,22 +3887,17 @@ namespace lfs::vis::gui {
         // Don't dismiss if interacting with language combo or any popup/modal
         const bool any_popup_open = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
         const bool any_item_active = ImGui::IsAnyItemActive();
-        if (!any_popup_open && !any_item_active && !modal_open && !drag_drop_hovering_ && (mouse_action || key_action)) {
+        if (!any_popup_open && !any_item_active && !drag_drop_hovering_ && (mouse_action || key_action)) {
             show_startup_overlay_ = false;
         }
     }
 
     void GuiManager::requestExitConfirmation() {
-        if (!exit_confirmation_popup_)
-            return;
-        exit_confirmation_popup_->show([this]() {
-            force_exit_ = true;
-            glfwSetWindowShouldClose(viewer_->getWindow(), true);
-        });
+        lfs::core::events::cmd::RequestExit{}.emit();
     }
 
     bool GuiManager::isExitConfirmationPending() const {
-        return exit_confirmation_popup_ && exit_confirmation_popup_->isOpen();
+        return lfs::python::is_exit_popup_open();
     }
 
 } // namespace lfs::vis::gui

@@ -427,6 +427,64 @@ namespace lfs::vis::gui {
 #endif
     }
 
+    std::filesystem::path SaveMp4FileDialog(const std::string& defaultName) {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"MP4 Video", L"*.mp4"}};
+        const std::wstring wDefaultName(defaultName.begin(), defaultName.end());
+
+        if (SUCCEEDED(utils::saveFileNative(filePath, rgSpec, 1, wDefaultName.c_str()))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            if (result.extension() != ".mp4") {
+                result += ".mp4";
+            }
+            return result;
+        }
+        return {};
+#else
+        const std::string primary = "zenity --file-selection --save --confirm-overwrite "
+                                    "--file-filter='MP4 Video|*.mp4' "
+                                    "--filename='" +
+                                    defaultName + ".mp4' 2>/dev/null";
+        const std::string fallback = "kdialog --getsavefilename . 'MP4 Video (*.mp4)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        if (result.empty())
+            return {};
+
+        std::filesystem::path path(result);
+        if (path.extension() != ".mp4") {
+            path += ".mp4";
+        }
+        return path;
+#endif
+    }
+
+    std::filesystem::path OpenVideoFileDialog() {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"Video Files", L"*.mp4;*.avi;*.mov;*.mkv;*.webm;*.flv;*.wmv"},
+                                      {L"All Files", L"*.*"}};
+
+        if (SUCCEEDED(utils::selectFileNative(filePath, rgSpec, 2))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            return result;
+        }
+        return {};
+#else
+        const std::string primary = "zenity --file-selection "
+                                    "--file-filter='Video Files|*.mp4 *.avi *.mov *.mkv *.webm *.flv *.wmv' "
+                                    "--file-filter='All Files|*' "
+                                    "2>/dev/null";
+        const std::string fallback = "kdialog --getopenfilename . 'Video Files (*.mp4 *.avi *.mov *.mkv *.webm *.flv *.wmv)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        return result.empty() ? std::filesystem::path{} : std::filesystem::path(result);
+#endif
+    }
+
     std::filesystem::path SelectFolderDialog(const std::string& title, const std::filesystem::path& startDir) {
 #ifdef _WIN32
         HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -567,6 +625,69 @@ namespace lfs::vis::gui {
 
         const std::string result = runDialogCommand(primary, fallback);
         return result.empty() ? std::filesystem::path{} : std::filesystem::path(result);
+#endif
+    }
+
+    std::filesystem::path OpenPythonFileDialog(const std::filesystem::path& startDir) {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"Python Script", L"*.py"}};
+
+        if (SUCCEEDED(utils::selectFileNative(filePath, rgSpec, 1, false))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            return result;
+        }
+        return {};
+#else
+        const bool has_valid_start = !startDir.empty() && std::filesystem::exists(startDir);
+        const std::string start_path = has_valid_start
+                                           ? shell_escape(lfs::core::path_to_utf8(startDir))
+                                           : "'.'";
+        const std::string primary = "zenity --file-selection "
+                                    "--filename=" +
+                                    start_path + "/ "
+                                                 "--file-filter='Python Script|*.py' "
+                                                 "--title='Open Python Script' 2>/dev/null";
+        const std::string fallback = "kdialog --getopenfilename " + start_path + " 'Python Script (*.py)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        return result.empty() ? std::filesystem::path{} : std::filesystem::path(result);
+#endif
+    }
+
+    std::filesystem::path SavePythonFileDialog(const std::string& defaultName) {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"Python Script", L"*.py"}};
+        const std::wstring wDefaultName = utils::utf8_to_wstring(defaultName);
+
+        if (SUCCEEDED(utils::saveFileNative(filePath, rgSpec, 1, wDefaultName.c_str()))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            if (result.extension() != ".py") {
+                result += ".py";
+            }
+            return result;
+        }
+        return {};
+#else
+        const std::string escaped_name = shell_escape(defaultName + ".py");
+        const std::string primary = "zenity --file-selection --save --confirm-overwrite "
+                                    "--file-filter='Python Script|*.py' "
+                                    "--filename=" +
+                                    escaped_name + " 2>/dev/null";
+        const std::string fallback = "kdialog --getsavefilename . 'Python Script (*.py)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        if (result.empty())
+            return {};
+
+        std::filesystem::path path(result);
+        if (path.extension() != ".py") {
+            path += ".py";
+        }
+        return path;
 #endif
     }
 

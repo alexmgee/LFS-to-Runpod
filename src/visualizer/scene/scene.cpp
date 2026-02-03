@@ -3,8 +3,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "scene/scene.hpp"
+#include "core/camera.hpp"
 #include "core/cuda/memory_arena.hpp"
+#include "core/events.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
 #include "core/splat_data_transform.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
 #include "io/cache_image_loader.hpp"
@@ -34,6 +37,12 @@ namespace lfs::vis {
         scene_ = scene;
         if (!scene_)
             return;
+
+        // Set property paths for undo tracking (node:Name.property)
+        std::string owner_id = "node:" + name;
+        local_transform.setPropertyPath(owner_id, "transform");
+        visible.setPropertyPath(owner_id, "visible");
+        locked.setPropertyPath(owner_id, "locked");
 
         local_transform.setCallback([this] {
             if (scene_) {
@@ -271,8 +280,6 @@ namespace lfs::vis {
         has_selection_ = false;
         resetSelectionState();
 
-        train_cameras_.reset();
-        val_cameras_.reset();
         initial_point_cloud_.reset();
         training_model_node_.clear();
 
@@ -283,7 +290,7 @@ namespace lfs::vis {
         // Release GPU memory
         cudaDeviceSynchronize();
         lfs::core::CudaMemoryPool::instance().trim_cached_memory();
-        lfs::core::GlobalArenaManager::instance().get_arena().emergency_cleanup();
+        lfs::core::GlobalArenaManager::instance().get_arena().full_reset();
     }
 
     std::pair<std::string, std::string> Scene::cycleVisibilityWithNames() {
@@ -405,15 +412,15 @@ namespace lfs::vis {
         return visible;
     }
 
-    std::unordered_set<int> Scene::getVisibleCameraIndices() const {
-        std::unordered_set<int> visible_indices;
+    std::vector<std::shared_ptr<const lfs::core::Camera>> Scene::getVisibleCameras() const {
+        std::vector<std::shared_ptr<const lfs::core::Camera>> result;
         for (const auto& node : nodes_) {
-            if (node->type == NodeType::CAMERA && node->camera_index >= 0 &&
+            if (node->type == NodeType::CAMERA && node->camera &&
                 isNodeEffectivelyVisible(node->id)) {
-                visible_indices.insert(node->camera_index);
+                result.push_back(node->camera);
             }
         }
-        return visible_indices;
+        return result;
     }
 
     const Scene::Node* Scene::getNode(const std::string& name) const {
@@ -451,6 +458,8 @@ namespace lfs::vis {
                 visible_nodes.push_back(node.get());
             }
         }
+
+        LOG_DEBUG("rebuildModelCache: {} visible of {} nodes", visible_nodes.size(), nodes_.size());
 
         if (visible_nodes.empty()) {
             cached_combined_.reset();
@@ -758,19 +767,31 @@ namespace lfs::vis {
             }
             *selection_mask_ = mask_cpu.cuda();
             has_selection_ = true;
+            core::events::state::SelectionChanged{
+                .has_selection = true,
+                .count = static_cast<int>(selected_indices.size())}
+                .emit();
         } else {
             has_selection_ = false;
+            core::events::state::SelectionChanged{.has_selection = false, .count = 0}.emit();
         }
     }
 
     void Scene::setSelectionMask(std::shared_ptr<lfs::core::Tensor> mask) {
         selection_mask_ = std::move(mask);
         has_selection_ = selection_mask_ && selection_mask_->is_valid() && selection_mask_->numel() > 0;
+
+        int count = 0;
+        if (has_selection_) {
+            count = static_cast<int>(selection_mask_->to(core::DataType::Float32).sum_scalar());
+        }
+        core::events::state::SelectionChanged{.has_selection = has_selection_, .count = count}.emit();
     }
 
     void Scene::clearSelection() {
         selection_mask_.reset();
         has_selection_ = false;
+        core::events::state::SelectionChanged{.has_selection = false, .count = 0}.emit();
     }
 
     bool Scene::hasSelection() const {
@@ -1214,18 +1235,19 @@ namespace lfs::vis {
         return id;
     }
 
-    NodeId Scene::addCamera(const std::string& name, const NodeId parent, const int camera_index, const int camera_uid,
-                            const std::string& image_path, const std::string& mask_path) {
+    NodeId Scene::addCamera(const std::string& name, const NodeId parent, std::shared_ptr<lfs::core::Camera> camera) {
+        assert(camera && "Camera object cannot be null");
+
         const NodeId id = next_node_id_++;
         auto node = std::make_unique<Node>();
         node->id = id;
         node->parent_id = parent;
         node->type = NodeType::CAMERA;
         node->name = name;
-        node->camera_index = camera_index;
-        node->camera_uid = camera_uid;
-        node->image_path = image_path;
-        node->mask_path = mask_path;
+        node->camera = std::move(camera);
+        node->camera_uid = node->camera->uid();
+        node->image_path = lfs::core::path_to_utf8(node->camera->image_path());
+        node->mask_path = lfs::core::path_to_utf8(node->camera->mask_path());
 
         // Add to parent's children
         if (parent != NULL_NODE) {
@@ -1903,14 +1925,13 @@ namespace lfs::vis {
 
     // ========== Training Data Storage ==========
 
-    void Scene::setTrainCameras(std::shared_ptr<lfs::training::CameraDataset> dataset) {
-        train_cameras_ = std::move(dataset);
-        LOG_DEBUG("Scene: set train cameras ({})", train_cameras_ ? "valid" : "null");
-    }
-
-    void Scene::setValCameras(std::shared_ptr<lfs::training::CameraDataset> dataset) {
-        val_cameras_ = std::move(dataset);
-        LOG_DEBUG("Scene: set val cameras ({})", val_cameras_ ? "valid" : "null");
+    bool Scene::hasTrainingData() const {
+        for (const auto& node : nodes_) {
+            if (node->type == NodeType::CAMERA && node->camera) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void Scene::setInitialPointCloud(std::shared_ptr<lfs::core::PointCloud> point_cloud) {
@@ -1969,24 +1990,19 @@ namespace lfs::vis {
     }
 
     std::shared_ptr<const lfs::core::Camera> Scene::getCameraByUid(int uid) const {
-        if (!train_cameras_) {
-            return nullptr;
-        }
-        for (const auto& cam : train_cameras_->get_cameras()) {
-            if (cam->uid() == uid) {
-                return cam;
+        for (const auto& node : nodes_) {
+            if (node->type == NodeType::CAMERA && node->camera && node->camera->uid() == uid) {
+                return node->camera;
             }
         }
         return nullptr;
     }
 
-    std::vector<std::shared_ptr<const lfs::core::Camera>> Scene::getAllCameras() const {
-        std::vector<std::shared_ptr<const lfs::core::Camera>> result;
-        if (train_cameras_) {
-            const auto& cams = train_cameras_->get_cameras();
-            result.reserve(cams.size());
-            for (const auto& cam : cams) {
-                result.push_back(cam);
+    std::vector<std::shared_ptr<lfs::core::Camera>> Scene::getAllCameras() const {
+        std::vector<std::shared_ptr<lfs::core::Camera>> result;
+        for (const auto& node : nodes_) {
+            if (node->type == NodeType::CAMERA && node->camera) {
+                result.push_back(node->camera);
             }
         }
         return result;

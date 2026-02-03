@@ -1280,4 +1280,126 @@ namespace lfs::io {
         return output_buffer;
     }
 
+    std::vector<std::vector<uint8_t>> NvCodecImageLoader::encode_batch_rgb_to_jpeg(
+        const std::vector<void*>& gpu_ptrs,
+        const int width,
+        const int height,
+        const int quality,
+        void* cuda_stream) {
+
+        if (gpu_ptrs.empty()) {
+            return {};
+        }
+
+        if (!impl_->encoder) {
+            throw std::runtime_error("JPEG encoder not available");
+        }
+
+        std::lock_guard<std::mutex> lock(impl_->encoder_mutex);
+
+        const int batch_size = static_cast<int>(gpu_ptrs.size());
+        const size_t frame_size = static_cast<size_t>(width) * height * 3;
+
+        std::vector<nvimgcodecImage_t> nv_images(batch_size);
+        std::vector<nvimgcodecCodeStream_t> code_streams(batch_size);
+        std::vector<std::vector<uint8_t>> output_buffers(batch_size);
+
+        for (int i = 0; i < batch_size; i++) {
+            nvimgcodecImageInfo_t image_info{};
+            image_info.struct_type = NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO;
+            image_info.struct_size = sizeof(nvimgcodecImageInfo_t);
+            image_info.sample_format = NVIMGCODEC_SAMPLEFORMAT_I_RGB;
+            image_info.color_spec = NVIMGCODEC_COLORSPEC_SRGB;
+            image_info.chroma_subsampling = NVIMGCODEC_SAMPLING_444;
+            image_info.num_planes = 1;
+            image_info.plane_info[0].height = height;
+            image_info.plane_info[0].width = width;
+            image_info.plane_info[0].row_stride = width * 3;
+            image_info.plane_info[0].num_channels = 3;
+            image_info.plane_info[0].sample_type = NVIMGCODEC_SAMPLE_DATA_TYPE_UINT8;
+            image_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
+            image_info.buffer = gpu_ptrs[i];
+            image_info.buffer_size = frame_size;
+            image_info.cuda_stream = static_cast<cudaStream_t>(cuda_stream);
+
+            auto status = nvimgcodecImageCreate(impl_->instance, &nv_images[i], &image_info);
+            if (status != NVIMGCODEC_STATUS_SUCCESS) {
+                for (int j = 0; j < i; j++) {
+                    nvimgcodecImageDestroy(nv_images[j]);
+                }
+                throw std::runtime_error("Failed to create image for batch encoding");
+            }
+
+            nvimgcodecImageInfo_t output_info{};
+            output_info.struct_type = NVIMGCODEC_STRUCTURE_TYPE_IMAGE_INFO;
+            output_info.struct_size = sizeof(nvimgcodecImageInfo_t);
+            std::snprintf(output_info.codec_name, sizeof(output_info.codec_name), "%s", "jpeg");
+
+            status = nvimgcodecCodeStreamCreateToHostMem(
+                impl_->instance, &code_streams[i], &output_buffers[i],
+                [](void* ctx, size_t req_size) -> unsigned char* {
+                    auto* vec = static_cast<std::vector<uint8_t>*>(ctx);
+                    vec->resize(req_size);
+                    return vec->data();
+                },
+                &output_info);
+
+            if (status != NVIMGCODEC_STATUS_SUCCESS) {
+                for (int j = 0; j <= i; j++) {
+                    nvimgcodecImageDestroy(nv_images[j]);
+                    if (j < i)
+                        nvimgcodecCodeStreamDestroy(code_streams[j]);
+                }
+                throw std::runtime_error("Failed to create output code stream for batch encoding");
+            }
+        }
+
+        nvimgcodecEncodeParams_t encode_params{};
+        encode_params.struct_type = NVIMGCODEC_STRUCTURE_TYPE_ENCODE_PARAMS;
+        encode_params.struct_size = sizeof(nvimgcodecEncodeParams_t);
+        encode_params.quality_value = static_cast<float>(quality);
+        encode_params.quality_type = NVIMGCODEC_QUALITY_TYPE_DEFAULT;
+
+        nvimgcodecFuture_t encode_future;
+        auto status = nvimgcodecEncoderEncode(
+            impl_->encoder, nv_images.data(), code_streams.data(),
+            batch_size, &encode_params, &encode_future);
+
+        if (status != NVIMGCODEC_STATUS_SUCCESS) {
+            for (int i = 0; i < batch_size; i++) {
+                nvimgcodecCodeStreamDestroy(code_streams[i]);
+                nvimgcodecImageDestroy(nv_images[i]);
+            }
+            throw std::runtime_error("Batch encode failed to start");
+        }
+
+        nvimgcodecFutureWaitForAll(encode_future);
+
+        std::vector<nvimgcodecProcessingStatus_t> statuses(batch_size);
+        size_t status_size = batch_size;
+        nvimgcodecFutureGetProcessingStatus(encode_future, statuses.data(), &status_size);
+        nvimgcodecFutureDestroy(encode_future);
+
+        for (int i = 0; i < batch_size; i++) {
+            nvimgcodecCodeStreamDestroy(code_streams[i]);
+            nvimgcodecImageDestroy(nv_images[i]);
+        }
+
+        int failed_count = 0;
+        for (int i = 0; i < batch_size; i++) {
+            if (statuses[i] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
+                LOG_ERROR("Batch encode frame {} failed: {}", i,
+                          processing_status_to_string(statuses[i]));
+                output_buffers[i].clear();
+                failed_count++;
+            }
+        }
+
+        if (failed_count > 0) {
+            LOG_WARN("Batch encode: {} of {} frames failed", failed_count, batch_size);
+        }
+
+        return output_buffers;
+    }
+
 } // namespace lfs::io

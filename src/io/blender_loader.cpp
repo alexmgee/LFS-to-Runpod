@@ -8,7 +8,6 @@
 #include "core/path_utils.hpp"
 #include "core/point_cloud.hpp"
 #include "formats/transforms.hpp"
-#include "training/dataset.hpp"
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -95,7 +94,7 @@ namespace lfs::io {
             auto end_time = std::chrono::high_resolution_clock::now();
             return LoadResult{
                 .data = LoadedScene{
-                    .cameras = nullptr,
+                    .cameras = {},
                     .point_cloud = nullptr},
                 .scene_center = lfs::core::Tensor::zeros({3}),
                 .loader_used = name(),
@@ -146,17 +145,6 @@ namespace lfs::io {
                 cameras.push_back(std::move(cam));
             }
 
-            // Create dataset configuration
-            lfs::core::param::DatasetConfig dataset_config;
-            dataset_config.data_path = path;
-            dataset_config.images = options.images_folder;
-            dataset_config.resize_factor = options.resize_factor;
-            dataset_config.max_width = options.max_width;
-
-            // Create dataset with ALL images
-            auto dataset = std::make_shared<lfs::training::CameraDataset>(
-                std::move(cameras), dataset_config, lfs::training::CameraDataset::Split::ALL);
-
             if (options.progress) {
                 options.progress(60.0f, "Loading point cloud...");
             }
@@ -203,16 +191,14 @@ namespace lfs::io {
             auto load_time = std::chrono::duration_cast<std::chrono::milliseconds>(
                 end_time - start_time);
 
-            // Create result with shared_ptr
             LoadResult result{
                 .data = LoadedScene{
-                    .cameras = std::move(dataset),
+                    .cameras = std::move(cameras),
                     .point_cloud = std::move(point_cloud)},
                 .scene_center = scene_center,
                 .loader_used = name(),
                 .load_time = load_time,
-                .warnings = std::move(warnings),
-                .provided_splits = splits};
+                .warnings = std::move(warnings)};
 
             LOG_INFO("Blender/NeRF dataset loaded successfully in {}ms", load_time.count());
             LOG_INFO("  - {} cameras", camera_infos.size());

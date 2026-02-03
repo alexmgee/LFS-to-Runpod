@@ -450,7 +450,8 @@
     "gaussian_rings": "Pierścienie Gaussowskie",
     "center_markers": "Znaczniki Środkowe",
     "perspective": "Perspektywa (O)",
-    "orthographic": "Ortograficzna (O)"
+    "orthographic": "Ortograficzna (O)",
+    "sequencer": "Sekwencer"
   },
 
   "transform": {
@@ -605,6 +606,7 @@
     "loss": "Strata:",
     "gaussians_count": "%s Gaussowskich",
     "exporting": "Eksportowanie %s...",
+    "exporting_video": "Eksportowanie wideo...",
     "importing": "Importowanie %s...",
     "import_complete": "Import zakończony: %zu obrazów, %zu punktów",
     "import_failed": "Import nieudany: %s",
@@ -712,6 +714,9 @@
   },
 
   "image_preview": {
+    "image_section": "OBRAZ",
+    "file_section": "PLIK",
+    "view_section": "WIDOK",
     "view": "Widok",
     "navigate": "Nawiguj",
     "fit_to_window": "Dopasuj do Okna",

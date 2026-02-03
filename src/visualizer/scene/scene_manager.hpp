@@ -44,7 +44,7 @@ namespace lfs::vis {
         }
         bool isEmpty() const {
             std::lock_guard<std::mutex> lock(state_mutex_);
-            return content_type_ == ContentType::Empty;
+            return content_type_ == ContentType::Empty && !scene_.hasNodes();
         }
 
         bool hasSplatFiles() const {
@@ -90,7 +90,6 @@ namespace lfs::vis {
         TrainerManager* getTrainerManager() { return services().trainerOrNull(); }
         const TrainerManager* getTrainerManager() const { return services().trainerOrNull(); }
         RenderingManager* getRenderingManager() { return services().renderingOrNull(); }
-        command::CommandHistory* getCommandHistory() { return services().commandsOrNull(); }
 
         void changeContentType(const ContentType& type);
 
@@ -113,6 +112,7 @@ namespace lfs::vis {
         [[nodiscard]] NodeType getSelectedNodeType() const;
         [[nodiscard]] int getSelectedNodeIndex() const;
         [[nodiscard]] std::vector<bool> getSelectedNodeMask() const;
+        [[nodiscard]] int getSelectedCameraUid() const;
         void ensureCropBoxForSelectedNode();
         void selectCropBoxForCurrentNode();
 
@@ -156,6 +156,10 @@ namespace lfs::vis {
 
         void loadDataset(const std::filesystem::path& path,
                          const lfs::core::param::TrainingParameters& params);
+
+        // Import COLMAP cameras only (no images required)
+        // Loads cameras from sparse folder and displays frustums without needing image files
+        void loadColmapCamerasOnly(const std::filesystem::path& sparse_path);
 
         // Apply pre-loaded dataset to scene (for async loading)
         // The LoadResult comes from background thread, scene modification happens on main thread

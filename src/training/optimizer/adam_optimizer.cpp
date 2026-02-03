@@ -710,4 +710,30 @@ namespace lfs::training {
         }
     }
 
+    void AdamOptimizer::reset_state(const ParamType type) {
+        auto* state = get_state_mutable(type);
+        if (!state || !state->exp_avg.is_valid()) {
+            return;
+        }
+
+        state->exp_avg.zero_();
+        state->exp_avg_sq.zero_();
+        state->step_count = 0;
+    }
+
+    void AdamOptimizer::invalidate_state(const ParamType type) {
+        const auto name = param_name(type);
+        auto it = states_.find(name);
+        if (it == states_.end()) {
+            return;
+        }
+
+        it->second.exp_avg = {};
+        it->second.exp_avg_sq = {};
+        it->second.grad = {};
+        it->second.size = 0;
+        it->second.capacity = 0;
+        it->second.step_count = 0;
+    }
+
 } // namespace lfs::training

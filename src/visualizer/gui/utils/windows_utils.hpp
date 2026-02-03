@@ -40,7 +40,13 @@ namespace lfs::vis::gui {
     std::filesystem::path SaveSogFileDialog(const std::string& defaultName);
     std::filesystem::path SaveSpzFileDialog(const std::string& defaultName);
     std::filesystem::path SaveHtmlFileDialog(const std::string& defaultName);
+    std::filesystem::path SaveMp4FileDialog(const std::string& defaultName);
+    std::filesystem::path OpenVideoFileDialog();
     std::filesystem::path SelectFolderDialog(const std::string& title = "Select Folder",
                                              const std::filesystem::path& startDir = {});
+
+    // Python script file dialogs
+    std::filesystem::path OpenPythonFileDialog(const std::filesystem::path& startDir = {});
+    std::filesystem::path SavePythonFileDialog(const std::string& defaultName);
 
 } // namespace lfs::vis::gui

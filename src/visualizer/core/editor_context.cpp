@@ -127,4 +127,22 @@ namespace lfs::vis {
         }
     }
 
+    void EditorContext::setActiveOperator(const std::string& id, const std::string& gizmo_type) {
+        LOG_DEBUG("EditorContext::setActiveOperator: id='{}', gizmo_type='{}'", id, gizmo_type);
+        active_operator_id_ = id;
+        gizmo_type_ = gizmo_type;
+        LOG_DEBUG("EditorContext::setActiveOperator: active_operator_id_='{}', hasActive={}",
+                  active_operator_id_, !active_operator_id_.empty());
+    }
+
+    void EditorContext::clearActiveOperator() {
+        LOG_DEBUG("EditorContext::clearActiveOperator: was '{}'", active_operator_id_);
+        active_operator_id_.clear();
+        gizmo_type_.clear();
+    }
+
+    void EditorContext::setGizmoType(const std::string& type) { gizmo_type_ = type; }
+
+    void EditorContext::clearGizmo() { gizmo_type_.clear(); }
+
 } // namespace lfs::vis

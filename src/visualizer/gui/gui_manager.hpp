@@ -4,25 +4,19 @@
 
 #pragma once
 
-#include "command/commands/composite_command.hpp"
-#include "command/commands/cropbox_command.hpp"
-#include "command/commands/ellipsoid_command.hpp"
-#include "command/commands/transform_command.hpp"
 #include "core/events.hpp"
 #include "core/parameters.hpp"
+#include "core/path_utils.hpp"
 #include "gui/gizmo_transform.hpp"
-#include "gui/panels/gizmo_toolbar.hpp"
 #include "gui/panels/menu_bar.hpp"
-#include "gui/panels/transform_panel.hpp"
 #include "gui/ui_context.hpp"
 #include "gui/utils/drag_drop_native.hpp"
 #include "io/loader.hpp"
+#include "io/video/video_export_options.hpp"
+#include "sequencer/sequencer_controller.hpp"
+#include "sequencer/sequencer_panel.hpp"
 #include "windows/disk_space_error_dialog.hpp"
-#include "windows/exit_confirmation_popup.hpp"
-#include "windows/export_dialog.hpp"
-#include "windows/notification_popup.hpp"
-#include "windows/resume_checkpoint_popup.hpp"
-#include "windows/save_directory_popup.hpp"
+#include "windows/video_extractor_dialog.hpp"
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <atomic>
@@ -46,8 +40,23 @@ namespace lfs::vis {
 
     namespace gui {
         class FileBrowser;
-        class ScenePanel;
         class ProjectChangedDialogBox;
+
+        namespace panels {
+            struct SequencerUIState {
+                bool show_camera_path = true;
+                bool snap_to_grid = false;
+                float snap_interval = 0.5f;
+                float playback_speed = 1.0f;
+                bool follow_playback = false;
+                float pip_preview_scale = 1.0f;
+                lfs::io::video::VideoPreset preset = lfs::io::video::VideoPreset::YOUTUBE_1080P;
+                int custom_width = 1920;
+                int custom_height = 1080;
+                int framerate = 30;
+                int quality = 18;
+            };
+        } // namespace panels
 
         class GuiManager {
         public:
@@ -62,6 +71,7 @@ namespace lfs::vis {
             // State queries
             bool wantsInput() const;
             bool isAnyWindowActive() const;
+            bool needsAnimationFrame() const;
 
             // Window visibility
             void showWindow(const std::string& name, bool show = true);
@@ -76,31 +86,133 @@ namespace lfs::vis {
             bool isViewportFocused() const;
             bool isPositionInViewport(double x, double y) const;
             bool isViewportGizmoDragging() const { return viewport_gizmo_dragging_; }
-            bool isResizingPanel() const { return resizing_panel_ || hovering_panel_edge_; }
+            bool isResizingPanel() const {
+                return resizing_panel_ || hovering_panel_edge_ ||
+                       python_console_resizing_ || python_console_hovering_edge_;
+            }
             bool isPositionInViewportGizmo(double x, double y) const;
 
             // Selection sub-mode shortcuts (Ctrl+1..5)
-            void setSelectionSubMode(panels::SelectionSubMode mode);
-            panels::SelectionSubMode getSelectionSubMode() const { return gizmo_toolbar_state_.selection_mode; }
-            panels::ToolType getCurrentToolMode() const; // Delegates to EditorContext
-            const panels::GizmoToolbarState& getGizmoToolbarState() const { return gizmo_toolbar_state_; }
-            panels::TransformPanelState& getTransformPanelState() { return transform_panel_state_; }
+            void setSelectionSubMode(SelectionSubMode mode);
+            [[nodiscard]] SelectionSubMode getSelectionSubMode() const { return selection_mode_; }
+            [[nodiscard]] ToolType getCurrentToolMode() const;
+
+            // Transform gizmo settings
+            [[nodiscard]] TransformSpace getTransformSpace() const { return transform_space_; }
+            void setTransformSpace(TransformSpace space) { transform_space_ = space; }
+            [[nodiscard]] PivotMode getPivotMode() const { return pivot_mode_; }
+            void setPivotMode(PivotMode mode) { pivot_mode_ = mode; }
+            [[nodiscard]] ImGuizmo::OPERATION getCurrentOperation() const { return current_operation_; }
+            void setCurrentOperation(ImGuizmo::OPERATION op) { current_operation_ = op; }
 
             // Gizmo manipulation state (for wireframe sync)
             bool isCropboxGizmoActive() const { return cropbox_gizmo_active_; }
             bool isEllipsoidGizmoActive() const { return ellipsoid_gizmo_active_; }
 
             bool isForceExit() const { return force_exit_; }
+            void setForceExit(bool value) { force_exit_ = value; }
 
-            // Exit confirmation
+            [[nodiscard]] SequencerController& sequencer() { return sequencer_controller_; }
+            [[nodiscard]] const SequencerController& sequencer() const { return sequencer_controller_; }
+
+            [[nodiscard]] bool isSequencerVisible() const { return show_sequencer_; }
+            void setSequencerVisible(bool visible) { show_sequencer_ = visible; }
+
+            [[nodiscard]] panels::SequencerUIState& getSequencerUIState() { return sequencer_ui_state_; }
+            [[nodiscard]] const panels::SequencerUIState& getSequencerUIState() const { return sequencer_ui_state_; }
+
+            [[nodiscard]] VisualizerImpl* getViewer() const { return viewer_; }
+            [[nodiscard]] std::unordered_map<std::string, bool>* getWindowStates() { return &window_states_; }
+
             void requestExitConfirmation();
             bool isExitConfirmationPending() const;
 
-            // Input capture for key rebinding
+            void performExport(lfs::core::ExportFormat format, const std::filesystem::path& path,
+                               const std::vector<std::string>& node_names, int sh_degree);
+
             bool isCapturingInput() const;
             bool isModalWindowOpen() const;
+            [[nodiscard]] bool isStartupVisible() const { return show_startup_overlay_; }
             void captureKey(int key, int mods);
             void captureMouseButton(int button, int mods);
+
+            // Thumbnail system (delegates to MenuBar)
+            void requestThumbnail(const std::string& video_id);
+            void processThumbnails();
+            bool isThumbnailReady(const std::string& video_id) const;
+            uint64_t getThumbnailTexture(const std::string& video_id) const;
+
+            int getHighlightedCameraUid() const;
+
+            // Drag-drop state for overlays
+            [[nodiscard]] bool isDragHovering() const { return drag_drop_hovering_; }
+
+            // Export state accessors for Python overlays
+            [[nodiscard]] float getExportProgress() const { return export_state_.progress.load(); }
+            [[nodiscard]] std::string getExportStage() const {
+                std::lock_guard lock(export_state_.mutex);
+                return export_state_.stage;
+            }
+            [[nodiscard]] lfs::core::ExportFormat getExportFormat() const {
+                std::lock_guard lock(export_state_.mutex);
+                return export_state_.format;
+            }
+
+            // Export control
+            [[nodiscard]] bool isExporting() const { return export_state_.active.load(); }
+            void cancelExport();
+
+            // Import state accessors for Python overlays
+            [[nodiscard]] bool isImporting() const { return import_state_.active.load(); }
+            [[nodiscard]] bool isImportCompletionShowing() const { return import_state_.show_completion.load(); }
+            [[nodiscard]] float getImportProgress() const { return import_state_.progress.load(); }
+            [[nodiscard]] std::string getImportStage() const {
+                std::lock_guard lock(import_state_.mutex);
+                return import_state_.stage;
+            }
+            [[nodiscard]] std::string getImportDatasetType() const {
+                std::lock_guard lock(import_state_.mutex);
+                return import_state_.dataset_type;
+            }
+            [[nodiscard]] std::string getImportPath() const {
+                std::lock_guard lock(import_state_.mutex);
+                return lfs::core::path_to_utf8(import_state_.path.filename());
+            }
+            [[nodiscard]] bool getImportSuccess() const {
+                std::lock_guard lock(import_state_.mutex);
+                return import_state_.success;
+            }
+            [[nodiscard]] std::string getImportError() const {
+                std::lock_guard lock(import_state_.mutex);
+                return import_state_.error;
+            }
+            [[nodiscard]] size_t getImportNumImages() const {
+                std::lock_guard lock(import_state_.mutex);
+                return import_state_.num_images;
+            }
+            [[nodiscard]] size_t getImportNumPoints() const {
+                std::lock_guard lock(import_state_.mutex);
+                return import_state_.num_points;
+            }
+            [[nodiscard]] float getImportSecondsSinceCompletion() const {
+                if (!import_state_.show_completion.load())
+                    return 0.0f;
+                std::lock_guard lock(import_state_.mutex);
+                auto elapsed = std::chrono::steady_clock::now() - import_state_.completion_time;
+                return std::chrono::duration<float>(elapsed).count();
+            }
+            void dismissImport() { import_state_.show_completion.store(false); }
+
+            // Video export state accessors for Python overlays
+            [[nodiscard]] bool isExportingVideo() const { return video_export_state_.active.load(); }
+            [[nodiscard]] float getVideoExportProgress() const { return video_export_state_.progress.load(); }
+            [[nodiscard]] int getVideoExportCurrentFrame() const { return video_export_state_.current_frame.load(); }
+            [[nodiscard]] int getVideoExportTotalFrames() const { return video_export_state_.total_frames.load(); }
+            [[nodiscard]] std::string getVideoExportStage() const {
+                std::lock_guard lock(video_export_state_.mutex);
+                return video_export_state_.stage;
+            }
+            void cancelVideoExport();
 
         private:
             void setupEventHandlers();
@@ -115,29 +227,13 @@ namespace lfs::vis {
 
             // Owned components
             std::unique_ptr<FileBrowser> file_browser_;
-            std::unique_ptr<ScenePanel> scene_panel_;
-            std::unique_ptr<ExportDialog> export_dialog_;
-            std::unique_ptr<NotificationPopup> notification_popup_;
-            std::unique_ptr<SaveDirectoryPopup> save_directory_popup_;
-            std::unique_ptr<ResumeCheckpointPopup> resume_checkpoint_popup_;
-            std::unique_ptr<ExitConfirmationPopup> exit_confirmation_popup_;
             std::unique_ptr<DiskSpaceErrorDialog> disk_space_error_dialog_;
+            std::unique_ptr<lfs::gui::VideoExtractorDialog> video_extractor_dialog_;
 
             // UI state only
             std::unordered_map<std::string, bool> window_states_;
             bool show_main_panel_ = true;
             bool show_viewport_gizmo_ = true;
-
-            // Speed overlay state
-            bool speed_overlay_visible_ = false;
-            std::chrono::steady_clock::time_point speed_overlay_start_time_;
-            std::chrono::milliseconds speed_overlay_duration_;
-            float current_speed_ = 0.0f;
-
-            // Zoom speed overlay state
-            bool zoom_speed_overlay_visible_ = false;
-            std::chrono::steady_clock::time_point zoom_speed_overlay_start_time_;
-            float zoom_speed_ = 5.0f;
 
             // Viewport region tracking
             ImVec2 viewport_pos_;
@@ -147,52 +243,85 @@ namespace lfs::vis {
 
             // Right panel state
             float right_panel_width_ = 300.0f;
-            float scene_panel_ratio_ = 0.4f;
             bool resizing_panel_ = false;
             bool hovering_panel_edge_ = false;
             static constexpr float RIGHT_PANEL_MIN_RATIO = 0.01f;
             static constexpr float RIGHT_PANEL_MAX_RATIO = 0.99f;
+            float scene_panel_ratio_ = 0.4f; // Scene panel vs tabs vertical split
+
+            // Python console panel state (docked mode)
+            float python_console_width_ = -1.0f; // -1 = uninitialized, will be set to 1:1 split on first open
+            bool python_console_resizing_ = false;
+            bool python_console_hovering_edge_ = false;
+            static constexpr float PYTHON_CONSOLE_MIN_WIDTH = 200.0f;
+            static constexpr float PYTHON_CONSOLE_MAX_RATIO = 0.5f;
 
             // Viewport gizmo layout (must match ViewportGizmo settings)
             static constexpr float VIEWPORT_GIZMO_SIZE = 95.0f;
             static constexpr float VIEWPORT_GIZMO_MARGIN_X = 10.0f;
             static constexpr float VIEWPORT_GIZMO_MARGIN_Y = 10.0f;
 
-            // Status bar layout
-            static constexpr float STATUS_BAR_HEIGHT = 22.0f;
-
             // Method declarations
-            void renderStatusBar(const UIContext& ctx);
-            void showSpeedOverlay(float current_speed, float max_speed);
-            void showZoomSpeedOverlay(float zoom_speed, float max_zoom_speed);
+            void renderSequencerPanel(const UIContext& ctx);
+            void renderCameraPath(const UIContext& ctx);
+            void renderDockedPythonConsole(const UIContext& ctx, float panel_x, float panel_h);
+            void renderPythonPanels(const UIContext& ctx);
             void renderCropBoxGizmo(const UIContext& ctx);
             void renderEllipsoidGizmo(const UIContext& ctx);
             void renderCropGizmoMiniToolbar(const UIContext& ctx);
             void renderNodeTransformGizmo(const UIContext& ctx);
 
             std::unique_ptr<MenuBar> menu_bar_;
-            bool menu_bar_input_bindings_set_ = false;
+
+            // Camera sequencer
+            SequencerController sequencer_controller_;
+            std::unique_ptr<SequencerPanel> sequencer_panel_;
+            bool keyframe_context_menu_open_ = false;
+            std::optional<size_t> context_menu_keyframe_;
+
+            // Keyframe gizmo
+            ImGuizmo::OPERATION keyframe_gizmo_op_ = ImGuizmo::OPERATION(0);
+            bool keyframe_gizmo_active_ = false;
+            glm::vec3 keyframe_pos_before_drag_{0.0f};
+            glm::quat keyframe_rot_before_drag_{1.0f, 0.0f, 0.0f, 0.0f};
+            void renderKeyframeGizmo(const UIContext& ctx);
+
+            // Keyframe preview (PiP)
+            static constexpr int PREVIEW_WIDTH = 320;
+            static constexpr int PREVIEW_HEIGHT = 180;
+            static constexpr float PREVIEW_TARGET_FPS = 30.0f;
+            unsigned int pip_fbo_ = 0;
+            unsigned int pip_texture_ = 0;
+            unsigned int pip_depth_rbo_ = 0;
+            bool pip_initialized_ = false;
+            std::optional<size_t> pip_last_keyframe_;
+            bool pip_needs_update_ = true;
+            std::chrono::steady_clock::time_point pip_last_render_time_;
+            void initPipPreview();
+            void renderKeyframePreview(const UIContext& ctx);
+            void drawPipPreviewWindow(const UIContext& ctx);
 
             // Node transform gizmo state
             bool show_node_gizmo_ = true;
             ImGuizmo::OPERATION node_gizmo_operation_ = ImGuizmo::TRANSLATE;
 
-            // Gizmo toolbar state
-            panels::GizmoToolbarState gizmo_toolbar_state_;
-            panels::TransformPanelState transform_panel_state_;
+            // Transform gizmo state (replaces GizmoToolbarState)
+            ImGuizmo::OPERATION current_operation_ = ImGuizmo::TRANSLATE;
+            SelectionSubMode selection_mode_ = SelectionSubMode::Centers;
+            TransformSpace transform_space_ = TransformSpace::Local;
+            PivotMode pivot_mode_ = PivotMode::Origin;
+            bool show_sequencer_ = false;
 
             // Unified gizmo context for cropbox/ellipsoid
             GizmoTransformContext gizmo_context_;
 
-            // Cropbox undo/redo state
+            // Cropbox gizmo state
             bool cropbox_gizmo_active_ = false;
             std::string cropbox_node_name_;
-            std::optional<command::CropBoxState> cropbox_state_before_drag_;
 
-            // Ellipsoid undo/redo state
+            // Ellipsoid gizmo state
             bool ellipsoid_gizmo_active_ = false;
             std::string ellipsoid_node_name_;
-            std::optional<command::EllipsoidState> ellipsoid_state_before_drag_;
 
             // Node transform undo/redo state (supports multi-selection)
             bool node_gizmo_active_ = false;
@@ -207,8 +336,8 @@ namespace lfs::vis {
             glm::vec3 gizmo_cumulative_scale_{1.0f};
 
             // Previous tool/selection mode for detecting changes
-            panels::ToolType previous_tool_ = panels::ToolType::None;
-            panels::SelectionSubMode previous_selection_mode_ = panels::SelectionSubMode::Centers;
+            std::string previous_tool_id_;
+            SelectionSubMode previous_selection_mode_ = SelectionSubMode::Centers;
 
             // Tool cleanup
             void deactivateAllTools();
@@ -219,7 +348,7 @@ namespace lfs::vis {
             void triggerCropFlash();
             void updateCropFlash();
 
-            bool focus_training_panel_ = false;
+            std::string focus_panel_name_;
             bool ui_hidden_ = false;
 
             // Font storage
@@ -228,6 +357,10 @@ namespace lfs::vis {
             ImFont* font_heading_ = nullptr;
             ImFont* font_small_ = nullptr;
             ImFont* font_section_ = nullptr;
+            ImFont* font_monospace_ = nullptr;
+            ImFont* mono_fonts_[FontSet::MONO_SIZE_COUNT] = {};
+            float mono_font_scales_[FontSet::MONO_SIZE_COUNT] = {};
+            FontSet buildFontSet() const;
 
             // Viewport gizmo drag-to-orbit state
             bool viewport_gizmo_dragging_ = false;
@@ -241,10 +374,24 @@ namespace lfs::vis {
                 lfs::core::ExportFormat format{lfs::core::ExportFormat::PLY}; // Protected by mutex
                 std::string stage;                                            // Protected by mutex
                 std::string error;                                            // Protected by mutex
-                std::mutex mutex;
+                mutable std::mutex mutex;
                 std::unique_ptr<std::jthread> thread;
             };
             ExportState export_state_;
+
+            // Video export state
+            struct VideoExportState {
+                std::atomic<bool> active{false};
+                std::atomic<bool> cancel_requested{false};
+                std::atomic<float> progress{0.0f};
+                std::atomic<int> current_frame{0};
+                std::atomic<int> total_frames{0};
+                std::string stage;
+                std::string error;
+                mutable std::mutex mutex;
+                std::unique_ptr<std::jthread> thread;
+            };
+            VideoExportState video_export_state_;
 
             // Async dataset import state
             struct ImportState {
@@ -252,7 +399,7 @@ namespace lfs::vis {
                 std::atomic<bool> show_completion{false};
                 std::atomic<bool> load_complete{false};
                 std::atomic<float> progress{0.0f};
-                std::mutex mutex;
+                mutable std::mutex mutex;
                 // Protected by mutex:
                 std::filesystem::path path;
                 std::string stage;
@@ -268,15 +415,14 @@ namespace lfs::vis {
             };
             ImportState import_state_;
 
+            // Sequencer UI state
+            panels::SequencerUIState sequencer_ui_state_;
+
             void startAsyncImport(const std::filesystem::path& path,
                                   const lfs::core::param::TrainingParameters& params);
             void checkAsyncImportCompletion();
             void applyLoadedDataToScene();
 
-            void renderExportOverlay();
-            void renderImportOverlay();
-            void renderEmptyStateOverlay();
-            void renderDragDropOverlay();
             void renderStartupOverlay();
 
             // Startup overlay state
@@ -290,8 +436,8 @@ namespace lfs::vis {
             void startAsyncExport(lfs::core::ExportFormat format,
                                   const std::filesystem::path& path,
                                   std::unique_ptr<lfs::core::SplatData> data);
-            void cancelExport();
-            bool isExporting() const { return export_state_.active.load(); }
+            void startVideoExport(const std::filesystem::path& path,
+                                  const io::video::VideoExportOptions& options);
 
             // Native drag-drop handler
             NativeDragDrop drag_drop_;

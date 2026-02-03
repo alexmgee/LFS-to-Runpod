@@ -39,7 +39,7 @@ namespace lichtfeld::Strings {
             inline constexpr const char* GETTING_STARTED = "menu.help.getting_started";
             inline constexpr const char* ABOUT = "menu.help.about";
         } // namespace Help
-    } // namespace Menu
+    }     // namespace Menu
 
     namespace Window {
         inline constexpr const char* GETTING_STARTED = "window.getting_started";
@@ -99,7 +99,7 @@ namespace lichtfeld::Strings {
             inline constexpr const char* ENABLED = "about.interop.enabled";
             inline constexpr const char* DISABLED = "about.interop.disabled";
         } // namespace Interop
-    } // namespace About
+    }     // namespace About
 
     namespace Training {
         namespace Section {
@@ -288,7 +288,7 @@ namespace lichtfeld::Strings {
             inline constexpr const char* ADD = "training.button.add";
             inline constexpr const char* REMOVE = "training.button.remove";
         } // namespace Button
-    } // namespace Training
+    }     // namespace Training
 
     namespace Scene {
         inline constexpr const char* ADD_PLY = "scene.add_ply";
@@ -504,6 +504,7 @@ namespace lichtfeld::Strings {
         inline constexpr const char* CENTER_MARKERS = "toolbar.center_markers";
         inline constexpr const char* PERSPECTIVE = "toolbar.perspective";
         inline constexpr const char* ORTHOGRAPHIC = "toolbar.orthographic";
+        inline constexpr const char* SEQUENCER = "toolbar.sequencer";
     } // namespace Toolbar
 
     namespace Transform {
@@ -788,6 +789,9 @@ namespace lichtfeld::Strings {
     } // namespace TrainingParams
 
     namespace ImagePreview {
+        inline constexpr const char* IMAGE_SECTION = "image_preview.image_section";
+        inline constexpr const char* FILE_SECTION = "image_preview.file_section";
+        inline constexpr const char* VIEW_SECTION = "image_preview.view_section";
         inline constexpr const char* VIEW = "image_preview.view";
         inline constexpr const char* NAVIGATE = "image_preview.navigate";
         inline constexpr const char* FIT_TO_WINDOW = "image_preview.fit_to_window";

@@ -4,8 +4,8 @@
 
 #pragma once
 
+#include "core/checkpoint_format.hpp"
 #include "io/loader_interface.hpp"
-#include "training/checkpoint.hpp"
 
 namespace lfs::io {
 
@@ -38,7 +38,7 @@ namespace lfs::io {
         /**
          * @brief Load checkpoint header only (for inspection without full load)
          */
-        static std::expected<lfs::training::CheckpointHeader, std::string> loadHeader(
+        static std::expected<lfs::core::CheckpointHeader, std::string> loadHeader(
             const std::filesystem::path& path);
 
         /**

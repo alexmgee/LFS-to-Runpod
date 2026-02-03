@@ -251,9 +251,9 @@ namespace lfs::rendering {
             glfwGetFramebufferSize(window, &fb_width, &fb_height);
         }
 
-        // Position gizmo at lower-right of viewport (convert ImGui Y to GL Y)
+        // Position gizmo at upper-right of viewport (convert ImGui Y to GL Y)
         const int gizmo_x = static_cast<int>(viewport_pos.x + viewport_size.x - size_ - margin_x_);
-        const int gizmo_y = fb_height - static_cast<int>(viewport_pos.y + viewport_size.y) + margin_y_;
+        const int gizmo_y = fb_height - static_cast<int>(viewport_pos.y) - margin_y_ - size_;
 
         // Set gizmo viewport
         glViewport(gizmo_x, gizmo_y, size_, size_);
@@ -569,9 +569,9 @@ namespace lfs::rendering {
         if (!initialized_)
             return std::nullopt;
 
-        // Gizmo bounds (lower-right corner in ImGui coords)
+        // Gizmo bounds (upper-right corner in ImGui coords)
         const float gizmo_x = viewport_pos.x + viewport_size.x - size_ - margin_x_;
-        const float gizmo_y = viewport_pos.y + viewport_size.y - size_ - margin_y_;
+        const float gizmo_y = viewport_pos.y + margin_y_;
 
         // Early out if outside gizmo bounds
         if (click_pos.x < gizmo_x || click_pos.x > gizmo_x + size_ ||

@@ -450,7 +450,8 @@
     "gaussian_rings": "高斯环",
     "center_markers": "中心标记",
     "perspective": "透视（O）",
-    "orthographic": "正交（O）"
+    "orthographic": "正交（O）",
+    "sequencer": "序列器"
   },
 
   "transform": {
@@ -605,6 +606,7 @@
     "loss": "损失：",
     "gaussians_count": "%s高斯",
     "exporting": "导出%s...",
+    "exporting_video": "导出视频...",
     "importing": "导入%s...",
     "import_complete": "导入完成：%zu 张图像，%zu 个点",
     "import_failed": "导入失败：%s",
@@ -712,6 +714,9 @@
   },
 
   "image_preview": {
+    "image_section": "图像",
+    "file_section": "文件",
+    "view_section": "视图",
     "view": "视图",
     "navigate": "导航",
     "fit_to_window": "适应窗口",

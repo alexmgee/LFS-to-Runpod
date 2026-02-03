@@ -110,6 +110,29 @@ namespace lfs::rendering {
         const auto& sh0 = gaussian_model.sh0_raw();
         const auto& shN = gaussian_model.shN_raw();
 
+        constexpr int DEBUG_LOG_INTERVAL = 300;
+        static int frame_count = 0;
+        if (frame_count++ % DEBUG_LOG_INTERVAL == 0) {
+            const auto means_cpu = means.cpu();
+            const auto scales_cpu = scales_raw.cpu();
+            const auto opacities_cpu = opacities_raw.cpu();
+            const auto cam_cpu = cam_pos.cpu();
+
+            LOG_DEBUG("Rasterizer stats (frame {}): {} gaussians", frame_count, means.size(0));
+            LOG_DEBUG("  means x:[{:.3f},{:.3f}] y:[{:.3f},{:.3f}] z:[{:.3f},{:.3f}]",
+                      means_cpu.slice(1, 0, 1).min().item(), means_cpu.slice(1, 0, 1).max().item(),
+                      means_cpu.slice(1, 1, 2).min().item(), means_cpu.slice(1, 1, 2).max().item(),
+                      means_cpu.slice(1, 2, 3).min().item(), means_cpu.slice(1, 2, 3).max().item());
+            LOG_DEBUG("  scales log:[{:.3f},{:.3f}] exp:[{:.6f},{:.3f}]",
+                      scales_cpu.min().item(), scales_cpu.max().item(),
+                      scales_cpu.exp().min().item(), scales_cpu.exp().max().item());
+            LOG_DEBUG("  opacity logit:[{:.3f},{:.3f}] sigmoid:[{:.4f},{:.4f}]",
+                      opacities_cpu.min().item(), opacities_cpu.max().item(),
+                      opacities_cpu.sigmoid().min().item(), opacities_cpu.sigmoid().max().item());
+            LOG_DEBUG("  camera:[{:.3f},{:.3f},{:.3f}]",
+                      cam_cpu.ptr<float>()[0], cam_cpu.ptr<float>()[1], cam_cpu.ptr<float>()[2]);
+        }
+
         // Get deleted mask (use passed parameter or from model)
         const Tensor* actual_deleted_mask = deleted_mask;
         if (!actual_deleted_mask && gaussian_model.has_deleted_mask()) {

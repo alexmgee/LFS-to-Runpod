@@ -656,11 +656,15 @@ namespace lfs::rendering {
 
         if (!cumulative_selection.is_valid() || cumulative_selection.size(0) == 0)
             return;
-        if (valid_nodes.empty())
-            return;
 
         const int n = static_cast<int>(cumulative_selection.size(0));
-        const int num_nodes = static_cast<int>(valid_nodes.size());
+
+        // If valid_nodes is empty, treat all nodes as valid
+        std::vector<bool> effective_valid_nodes = valid_nodes;
+        if (effective_valid_nodes.empty()) {
+            effective_valid_nodes.resize(1, true);
+        }
+        const int num_nodes = static_cast<int>(effective_valid_nodes.size());
 
         const uint8_t* const existing_ptr = (existing_mask.is_valid() &&
                                              existing_mask.numel() == static_cast<size_t>(n))
@@ -672,7 +676,7 @@ namespace lfs::rendering {
                                                 ? transform_indices->ptr<int>()
                                                 : nullptr;
 
-        const Tensor valid_nodes_gpu = upload_bool_mask(valid_nodes);
+        const Tensor valid_nodes_gpu = upload_bool_mask(effective_valid_nodes);
         const int grid_size = (n + KERNEL_BLOCK_SIZE - 1) / KERNEL_BLOCK_SIZE;
 
         apply_selection_group_mask_kernel<<<grid_size, KERNEL_BLOCK_SIZE>>>(

@@ -6,6 +6,7 @@
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -91,6 +92,18 @@ namespace lfs::vis::input {
         // UI
         TOGGLE_UI,
         TOGGLE_FULLSCREEN,
+        // Sequencer
+        SEQUENCER_ADD_KEYFRAME,
+        SEQUENCER_UPDATE_KEYFRAME,
+        SEQUENCER_PLAY_PAUSE,
+        // Tool switching
+        TOOL_SELECT,
+        TOOL_TRANSLATE,
+        TOOL_ROTATE,
+        TOOL_SCALE,
+        TOOL_MIRROR,
+        TOOL_BRUSH,
+        TOOL_ALIGN,
     };
 
     // Using MODIFIER_ prefix to avoid Windows macro conflicts
@@ -144,6 +157,18 @@ namespace lfs::vis::input {
         std::vector<Binding> bindings;
     };
 
+    struct CaptureState {
+        bool active = false;
+        ToolMode mode = ToolMode::GLOBAL;
+        Action action = Action::NONE;
+        std::optional<InputTrigger> captured;
+        bool waiting_for_double_click = false;
+        int pending_button = -1;
+        int pending_mods = 0;
+        std::chrono::steady_clock::time_point first_click_time;
+        static constexpr double DOUBLE_CLICK_WAIT_TIME = 0.4;
+    };
+
     class InputBindings {
     public:
         InputBindings();
@@ -176,6 +201,19 @@ namespace lfs::vis::input {
         using BindingsChangedCallback = std::function<void()>;
         void setOnBindingsChanged(BindingsChangedCallback callback) { on_bindings_changed_ = std::move(callback); }
 
+        // Capture mode for rebinding (called from Python)
+        void startCapture(ToolMode mode, Action action);
+        void cancelCapture();
+        void captureKey(int key, int mods);
+        void captureMouseButton(int button, int mods);
+        void updateCapture();
+        bool isCapturing() const { return capture_state_.active; }
+        const CaptureState& getCaptureState() const { return capture_state_; }
+        std::optional<InputTrigger> getAndClearCaptured();
+
+        // Get all bindings for a mode (for displaying in UI)
+        std::vector<std::pair<Action, std::string>> getBindingsForMode(ToolMode mode) const;
+
         static Profile createDefaultProfile();
 
     private:
@@ -195,6 +233,7 @@ namespace lfs::vis::input {
         std::map<DragMapKey, Action> drag_map_;
 
         BindingsChangedCallback on_bindings_changed_;
+        CaptureState capture_state_;
 
         void rebuildLookupMaps();
         void notifyBindingsChanged();

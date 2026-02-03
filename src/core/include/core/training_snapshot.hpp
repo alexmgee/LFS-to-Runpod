@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include "core/tensor_debug.hpp"
 #include <filesystem>
 #include <map>
@@ -33,10 +34,10 @@ namespace lfs::core::debug {
     };
 
     // Get current memory state
-    MemorySnapshot get_memory_snapshot();
+    LFS_CORE_API MemorySnapshot get_memory_snapshot();
 
     // Training state snapshot for debugging
-    struct TrainingSnapshot {
+    struct LFS_CORE_API TrainingSnapshot {
         int iteration = 0;
         float loss = 0.0f;
         float learning_rate = 0.0f;
@@ -97,6 +98,6 @@ namespace lfs::core::debug {
         }
     };
 
-    SnapshotDiff diff_snapshots(const TrainingSnapshot& a, const TrainingSnapshot& b);
+    LFS_CORE_API SnapshotDiff diff_snapshots(const TrainingSnapshot& a, const TrainingSnapshot& b);
 
 } // namespace lfs::core::debug

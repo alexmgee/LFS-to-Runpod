@@ -1,0 +1,4 @@
+# Python test dependencies for lichtfeld module
+pytest>=7.0
+pytest-xdist>=3.0  # Parallel test execution
+numpy>=1.20

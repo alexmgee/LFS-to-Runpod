@@ -38,11 +38,11 @@ set_target_properties(lfs_io_cuda PROPERTIES
 # CUDA compiler options for lfs_io_cuda
 target_compile_options(lfs_io_cuda PRIVATE
         # CUDA device code + MSVC host compiler flags (Windows only)
-        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo --extended-lambda --expt-relaxed-constexpr -Xcompiler=/Od -Xcompiler=/Z7 -Xcompiler=/utf-8 -Xcompiler=/D_CRT_SECURE_NO_WARNINGS --diag-suppress=27>
+        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:-O0 -g ${LFS_CUDA_DEVICE_DEBUG_FLAGS} -lineinfo --extended-lambda --expt-relaxed-constexpr -Xcompiler=/Od -Xcompiler=/Z7 -Xcompiler=/utf-8 -Xcompiler=/D_CRT_SECURE_NO_WARNINGS --diag-suppress=27>
         $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:-O3 -use_fast_math --extended-lambda --expt-relaxed-constexpr --ptxas-options=-v -Xcompiler=/O2 -Xcompiler=/DNDEBUG -Xcompiler=/utf-8 -Xcompiler=/D_CRT_SECURE_NO_WARNINGS --diag-suppress=27>
 
         # CUDA device code for non-Windows
-        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo --extended-lambda --expt-relaxed-constexpr>
+        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Debug>>:-O0 -g ${LFS_CUDA_DEVICE_DEBUG_FLAGS} -lineinfo --extended-lambda --expt-relaxed-constexpr>
         $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release>>:-O3 -use_fast_math --extended-lambda --expt-relaxed-constexpr --ptxas-options=-v>
 )
 
@@ -61,6 +61,55 @@ add_library(spz_lib STATIC
 target_include_directories(spz_lib PUBLIC ${CMAKE_SOURCE_DIR}/external/spz)
 target_link_libraries(spz_lib PRIVATE ZLIB::ZLIB)
 target_compile_features(spz_lib PUBLIC cxx_std_17)
+set_target_properties(spz_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Video encoding library (FFmpeg + CUDA for GPU-accelerated encoding)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+        libavcodec
+        libavformat
+        libswscale
+        libavutil
+)
+
+add_library(lfs_video STATIC
+        video/video_export_options.hpp
+        video/video_encoder.hpp
+        video/video_encoder.cpp
+        video/color_convert.cuh
+        video/color_convert.cu
+)
+
+target_include_directories(lfs_video
+        PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/include
+)
+
+target_link_libraries(lfs_video
+        PRIVATE
+        PkgConfig::FFMPEG
+        spdlog::spdlog
+        CUDA::cudart
+)
+
+target_compile_features(lfs_video PUBLIC cxx_std_23)
+
+set_target_properties(lfs_video PROPERTIES
+        CUDA_SEPARABLE_COMPILATION OFF
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+        CUDA_STANDARD 20
+        CUDA_STANDARD_REQUIRED ON
+        POSITION_INDEPENDENT_CODE ON
+)
+
+target_compile_options(lfs_video PRIVATE
+        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:-O0 -g ${LFS_CUDA_DEVICE_DEBUG_FLAGS} --extended-lambda -Xcompiler=/Od -Xcompiler=/Z7 -Xcompiler=/utf-8>
+        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:-O3 -use_fast_math --extended-lambda -Xcompiler=/O2 -Xcompiler=/utf-8>
+        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Debug>>:-O0 -g ${LFS_CUDA_DEVICE_DEBUG_FLAGS} --extended-lambda>
+        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release>>:-O3 -use_fast_math --extended-lambda>
+)
 
 # Main IO library
 add_library(lfs_io STATIC
@@ -107,6 +156,15 @@ add_library(lfs_io STATIC
         nvcodec_image_loader.cpp
         pipelined_image_loader.cpp
         stb_image_impl.cpp
+        tinyply.cpp
+
+        # Video frame extraction
+        video_frame_extractor.hpp
+        video_frame_extractor.cpp
+
+        # Video playback for preview
+        video_player.hpp
+        video_player.cpp
 )
 
 # Set include directories
@@ -118,6 +176,7 @@ target_include_directories(lfs_io
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/external
         ${CMAKE_SOURCE_DIR}/external/nvImageCodec/include
         ${CMAKE_SOURCE_DIR}/external/spz
 )
@@ -163,7 +222,7 @@ add_dependencies(lfs_io lfs_io_cuda)
 target_link_libraries(lfs_io
         PUBLIC
         lfs_core            # Link to modular core library for SplatData, Camera, etc.
-        lfs_training        # For checkpoint loading
+        lfs_video           # Video encoding for sequencer export
         PRIVATE
         TBB::tbb
         spdlog::spdlog
@@ -175,6 +234,7 @@ target_link_libraries(lfs_io
         lfs_io_cuda            # IO-specific CUDA kernels (morton, k-means)
         lfs_core_cuda          # Core CUDA utilities (lanczos_resize for nvcodec)
         spz_lib                # Niantic SPZ compressed format
+        PkgConfig::FFMPEG      # FFmpeg for video frame extraction
 )
 
 # Link nvImageCodec if available
@@ -188,6 +248,9 @@ endif()
 
 # Set C++ standard
 target_compile_features(lfs_io PUBLIC cxx_std_23)
+
+# Enable position-independent code for shared library linking (Python module)
+set_target_properties(lfs_io PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Compiler options
 target_compile_options(lfs_io PRIVATE
@@ -208,9 +271,10 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif ()
 endif ()
 
-# Export public headers (all interface files in src/io/include/io/)
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/io
-        DESTINATION include)
+if(NOT BUILD_PORTABLE)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/io
+            DESTINATION include)
+endif()
 
 message(STATUS "I/O module configured with SOG support")
 message(STATUS "  IO CUDA library: lfs_io_cuda (morton, k-means)")

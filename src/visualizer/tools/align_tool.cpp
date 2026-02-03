@@ -2,12 +2,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "tools/align_tool.hpp"
+#include "core/services.hpp"
 #include "internal/viewport.hpp"
 #include "rendering/rendering_manager.hpp"
-#include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
-#include <GLFW/glfw3.h>
-#include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
 
 namespace lfs::vis::tools {
@@ -21,7 +19,7 @@ namespace lfs::vis::tools {
 
     void AlignTool::shutdown() {
         tool_context_ = nullptr;
-        reset();
+        services().clearAlignPickedPoints();
     }
 
     void AlignTool::update([[maybe_unused]] const ToolContext& ctx) {}
@@ -71,10 +69,13 @@ namespace lfs::vis::tools {
         const ImU32 PREVIEW_COLOR = toU32WithAlpha(t.palette.error, 0.6f);
         const ImU32 CROSSHAIR_COLOR = toU32WithAlpha(t.palette.error, 0.8f);
 
+        // Get picked points from services
+        const auto& picked_points = services().getAlignPickedPoints();
+
         // Draw picked points
-        for (size_t i = 0; i < picked_points_.size(); ++i) {
-            const ImVec2 screen_pos = projectToScreen(picked_points_[i], viewport);
-            const float screen_radius = calculateScreenRadius(picked_points_[i], SPHERE_RADIUS, viewport);
+        for (size_t i = 0; i < picked_points.size(); ++i) {
+            const ImVec2 screen_pos = projectToScreen(picked_points[i], viewport);
+            const float screen_radius = calculateScreenRadius(picked_points[i], SPHERE_RADIUS, viewport);
 
             draw_list->AddCircleFilled(screen_pos, screen_radius, SPHERE_COLOR, 32);
             draw_list->AddCircle(screen_pos, screen_radius, SPHERE_OUTLINE, 32, 1.5f);
@@ -89,12 +90,13 @@ namespace lfs::vis::tools {
         draw_list->AddCircle(mouse_pos, 5.0f, CROSSHAIR_COLOR, 16, 2.0f);
 
         // Live preview at mouse position
-        if (picked_points_.size() < 3 && rendering_manager) {
+        if (picked_points.size() < 3 && rendering_manager) {
             const float depth = rendering_manager->getDepthAtPixel(
                 static_cast<int>(mouse_pos.x), static_cast<int>(mouse_pos.y));
 
             if (depth > 0.0f && depth < 1e9f) {
-                const glm::vec3 preview_point = unprojectScreenPoint(mouse_pos.x, mouse_pos.y, *tool_context_);
+                const glm::vec3 preview_point = viewport.unprojectPixel(
+                    mouse_pos.x, mouse_pos.y, depth, rendering_manager->getFovDegrees());
                 if (preview_point.x > -1e9f) {
                     const ImVec2 screen_pos = projectToScreen(preview_point, viewport);
                     const float screen_radius = calculateScreenRadius(preview_point, SPHERE_RADIUS, viewport);
@@ -102,22 +104,23 @@ namespace lfs::vis::tools {
                     draw_list->AddCircleFilled(screen_pos, screen_radius, PREVIEW_COLOR, 32);
                     draw_list->AddCircle(screen_pos, screen_radius, toU32WithAlpha(t.palette.text, 0.6f), 32, 1.5f);
 
-                    const char label = '1' + static_cast<char>(picked_points_.size());
+                    const char label = '1' + static_cast<char>(picked_points.size());
                     draw_list->AddText(ImVec2(screen_pos.x - 4, screen_pos.y - 6), toU32WithAlpha(t.palette.text, 0.7f), &label, &label + 1);
                 }
             }
         }
 
         // Normal preview when 2 points picked
-        if (picked_points_.size() == 2 && rendering_manager) {
+        if (picked_points.size() == 2 && rendering_manager) {
             const float depth = rendering_manager->getDepthAtPixel(
                 static_cast<int>(mouse_pos.x), static_cast<int>(mouse_pos.y));
 
             if (depth > 0.0f && depth < 1e9f) {
-                const glm::vec3 p2 = unprojectScreenPoint(mouse_pos.x, mouse_pos.y, *tool_context_);
+                const glm::vec3 p2 = viewport.unprojectPixel(
+                    mouse_pos.x, mouse_pos.y, depth, rendering_manager->getFovDegrees());
                 if (p2.x > -1e9f) {
-                    const glm::vec3& p0 = picked_points_[0];
-                    const glm::vec3& p1 = picked_points_[1];
+                    const glm::vec3& p0 = picked_points[0];
+                    const glm::vec3& p1 = picked_points[1];
 
                     const glm::vec3 v01 = p1 - p0;
                     const glm::vec3 v02 = p2 - p0;
@@ -148,7 +151,7 @@ namespace lfs::vis::tools {
 
         // Instructions
         const char* instruction = nullptr;
-        switch (picked_points_.size()) {
+        switch (picked_points.size()) {
         case 0: instruction = "Click 1st point"; break;
         case 1: instruction = "Click 2nd point"; break;
         case 2: instruction = "Click 3rd point"; break;
@@ -159,109 +162,17 @@ namespace lfs::vis::tools {
         }
 
         char count_text[16];
-        snprintf(count_text, sizeof(count_text), "Points: %zu/3", picked_points_.size());
+        snprintf(count_text, sizeof(count_text), "Points: %zu/3", picked_points.size());
         draw_list->AddText(ImVec2(10, 50), t.overlay_text_u32(), count_text);
     }
 
-    bool AlignTool::handleMouseButton(int button, int action, double x, double y, const ToolContext& ctx) {
-        if (!isEnabled())
-            return false;
-
-        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-            const glm::vec3 world_pos = unprojectScreenPoint(x, y, ctx);
-            if (world_pos.x > -1e9f) {
-                picked_points_.push_back(world_pos);
-                ctx.requestRender();
-
-                if (picked_points_.size() == 3) {
-                    applyAlignment(ctx);
-                    reset();
-                }
-                return true;
-            }
-        }
-
-        if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
-            reset();
-            ctx.requestRender();
-            return true;
-        }
-
-        return false;
-    }
-
     void AlignTool::onEnabledChanged(bool enabled) {
-        if (!enabled)
-            reset();
-    }
-
-    void AlignTool::reset() {
-        picked_points_.clear();
-    }
-
-    glm::vec3 AlignTool::unprojectScreenPoint(double x, double y, const ToolContext& ctx) {
-        constexpr glm::vec3 INVALID_POS(-1e10f);
-
-        auto* const rendering_manager = ctx.getRenderingManager();
-        if (!rendering_manager)
-            return INVALID_POS;
-
-        const float depth = rendering_manager->getDepthAtPixel(static_cast<int>(x), static_cast<int>(y));
-        if (depth < 0.0f)
-            return INVALID_POS;
-
-        const auto& viewport = ctx.getViewport();
-        return viewport.unprojectPixel(static_cast<float>(x), static_cast<float>(y), depth,
-                                       rendering_manager->getFovDegrees());
-    }
-
-    void AlignTool::applyAlignment(const ToolContext& ctx) {
-        if (picked_points_.size() != 3)
-            return;
-
-        auto* const scene_manager = ctx.getSceneManager();
-        if (!scene_manager)
-            return;
-
-        auto& scene = scene_manager->getScene();
-
-        const glm::vec3& p0 = picked_points_[0];
-        const glm::vec3& p1 = picked_points_[1];
-        const glm::vec3& p2 = picked_points_[2];
-
-        const glm::vec3 v01 = p1 - p0;
-        const glm::vec3 v02 = p2 - p0;
-        glm::vec3 normal = glm::normalize(glm::cross(v01, v02));
-        const glm::vec3 center = (p0 + p1 + p2) / 3.0f;
-
-        // Ensure normal points downward (-Y)
-        if (normal.y > 0.0f)
-            normal = -normal;
-
-        // Rotation to align normal with -Y
-        constexpr glm::vec3 kTargetUp(0.0f, -1.0f, 0.0f);
-        const glm::vec3 axis = glm::cross(normal, kTargetUp);
-        const float axis_len = glm::length(axis);
-
-        glm::mat4 rotation(1.0f);
-        if (axis_len > 1e-6f) {
-            const float angle = acos(glm::clamp(glm::dot(normal, kTargetUp), -1.0f, 1.0f));
-            rotation = glm::rotate(glm::mat4(1.0f), angle, glm::normalize(axis));
-        } else if (glm::dot(normal, kTargetUp) < 0.0f) {
-            rotation = glm::rotate(glm::mat4(1.0f), glm::pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
+        if (!enabled) {
+            services().clearAlignPickedPoints();
         }
-
-        // Transform: translate to origin, rotate, translate to Y=0
-        const glm::mat4 to_origin = glm::translate(glm::mat4(1.0f), -center);
-        const glm::mat4 from_origin = glm::translate(glm::mat4(1.0f), glm::vec3(center.x, 0.0f, center.z));
-        const glm::mat4 transform = from_origin * rotation * to_origin;
-
-        // Apply to all scene nodes
-        for (const auto* node : scene.getNodes()) {
-            scene_manager->setNodeTransform(node->name, transform * node->local_transform);
+        if (tool_context_) {
+            tool_context_->requestRender();
         }
-
-        ctx.requestRender();
     }
 
 } // namespace lfs::vis::tools

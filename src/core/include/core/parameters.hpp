@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "core/export.hpp"
+
 #include <array>
 #include <expected>
 #include <filesystem>
@@ -30,7 +32,7 @@ namespace lfs::core {
             Random      // Random per-pixel colors each iteration
         };
 
-        struct OptimizationParameters {
+        struct LFS_CORE_API OptimizationParameters {
             size_t iterations = 30'000;
             size_t sh_degree_interval = 1'000;
             float means_lr = 0.000016f;
@@ -59,6 +61,8 @@ namespace lfs::core {
             bool auto_train = false;                          // Start training immediately on startup
             bool no_splash = false;                           // Skip splash screen on startup
             bool no_interop = false;                          // Disable CUDA-GL interop (use CPU fallback)
+            bool debug_python = false;                        // Start debugpy listener for plugin debugging
+            int debug_python_port = 5678;                     // Port for debugpy listener
             std::string strategy = "mcmc";                    // Optimization strategy: mcmc, adc.
 
             // Mask parameters
@@ -132,7 +136,7 @@ namespace lfs::core {
             static OptimizationParameters adc_defaults();
         };
 
-        struct LoadingParams {
+        struct LFS_CORE_API LoadingParams {
             bool use_cpu_memory = true;
             float min_cpu_free_memory_ratio = 0.1f; // make sure at least 10% RAM is free
             float min_cpu_free_GB = 1.0f;           // min GB we want to be free
@@ -144,7 +148,7 @@ namespace lfs::core {
             static LoadingParams from_json(const nlohmann::json& j);
         };
 
-        struct DatasetConfig {
+        struct LFS_CORE_API DatasetConfig {
             std::filesystem::path data_path = "";
             std::filesystem::path output_path = "";
             std::string images = "images";
@@ -163,18 +167,24 @@ namespace lfs::core {
             static DatasetConfig from_json(const nlohmann::json& j);
         };
 
-        struct TrainingParameters {
+        struct LFS_CORE_API TrainingParameters {
             DatasetConfig dataset;
             OptimizationParameters optimization;
 
             // Viewer mode: splat files to load (.ply, .sog, .resume)
             std::vector<std::filesystem::path> view_paths;
 
+            // COLMAP sparse folder for camera-only import (no images required)
+            std::optional<std::filesystem::path> import_cameras_path = std::nullopt;
+
             // Optional splat file for initialization (.ply, .sog, .spz, .resume)
             std::optional<std::string> init_path = std::nullopt;
 
             // Checkpoint to resume training from
             std::optional<std::filesystem::path> resume_checkpoint = std::nullopt;
+
+            // Python scripts to execute for custom training callbacks
+            std::vector<std::filesystem::path> python_scripts;
         };
 
         // Output format for conversion tool
@@ -184,7 +194,7 @@ namespace lfs::core {
                                   HTML };
 
         // Parameters for the convert command
-        struct ConvertParameters {
+        struct LFS_CORE_API ConvertParameters {
             std::filesystem::path input_path;
             std::filesystem::path output_path; // Empty = derive from input
             OutputFormat format = OutputFormat::PLY;
@@ -194,10 +204,10 @@ namespace lfs::core {
         };
 
         // Modern C++23 functions returning expected values
-        std::expected<OptimizationParameters, std::string> read_optim_params_from_json(const std::filesystem::path& path);
+        LFS_CORE_API std::expected<OptimizationParameters, std::string> read_optim_params_from_json(const std::filesystem::path& path);
 
         // Save training parameters to JSON
-        std::expected<void, std::string> save_training_parameters_to_json(
+        LFS_CORE_API std::expected<void, std::string> save_training_parameters_to_json(
             const TrainingParameters& params,
             const std::filesystem::path& output_path);
 

@@ -49,7 +49,7 @@ protected:
     void TearDown() override {
         splat_.reset();
         camera_.reset();
-        GlobalArenaManager::instance().get_arena().emergency_cleanup();
+        GlobalArenaManager::instance().get_arena().full_reset();
     }
 
     void load_ply(const std::string& path) {
@@ -390,7 +390,7 @@ protected:
     }
 
     void TearDown() override {
-        GlobalArenaManager::instance().get_arena().emergency_cleanup();
+        GlobalArenaManager::instance().get_arena().full_reset();
     }
 
     float compute_loss(const Tensor& means, const Tensor& scaling, const Tensor& rotation,
@@ -627,7 +627,7 @@ protected:
     }
 
     void TearDown() override {
-        GlobalArenaManager::instance().get_arena().emergency_cleanup();
+        GlobalArenaManager::instance().get_arena().full_reset();
     }
 
     float compute_loss(const Tensor& means, const Tensor& scaling, const Tensor& rotation,

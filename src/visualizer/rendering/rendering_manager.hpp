@@ -83,6 +83,7 @@ namespace lfs::vis {
         bool use_ellipsoid = false;
         bool desaturate_unselected = false; // Desaturate unselected PLYs when one is selected
         bool desaturate_cropping = true;    // Desaturate outside crop box/ellipsoid instead of hiding
+        bool crop_filter_for_selection = false; // Use crop box/ellipsoid as selection filter
 
         // Appearance correction (PPISP)
         bool apply_appearance_correction = false;
@@ -232,6 +233,15 @@ namespace lfs::vis {
         // Main render function
         void renderFrame(const RenderContext& context, SceneManager* scene_manager);
 
+        // Render preview to external texture (for PiP preview)
+        bool renderPreviewFrame(SceneManager* scene_manager,
+                                const glm::mat3& camera_rotation,
+                                const glm::vec3& camera_position,
+                                float fov,
+                                unsigned int target_fbo,
+                                unsigned int target_texture,
+                                int width, int height);
+
         void markDirty();
 
         [[nodiscard]] bool needsRender() const {
@@ -251,6 +261,8 @@ namespace lfs::vis {
                 selection_flash_active_.store(false);
             }
 
+            if (overlay_animation_active_.load())
+                return true;
             return needs_render_.load();
         }
 
@@ -264,6 +276,8 @@ namespace lfs::vis {
             selection_flash_active_.store(true);
             markDirty();
         }
+
+        void setOverlayAnimationActive(const bool active) { overlay_animation_active_.store(active); }
 
         [[nodiscard]] float getSelectionFlashIntensity() const {
             if (!selection_flash_active_.load())
@@ -338,6 +352,36 @@ namespace lfs::vis {
                            lfs::core::Tensor* selection_tensor = nullptr,
                            bool saturation_mode = false, float saturation_amount = 0.0f);
         void clearBrushState();
+        [[nodiscard]] bool isBrushActive() const { return brush_active_; }
+        void getBrushState(float& x, float& y, float& radius, bool& add_mode) const {
+            x = brush_x_;
+            y = brush_y_;
+            radius = brush_radius_;
+            add_mode = brush_add_mode_;
+        }
+
+        // Rectangle preview
+        void setRectPreview(float x0, float y0, float x1, float y1, bool add_mode = true);
+        void clearRectPreview();
+        [[nodiscard]] bool isRectPreviewActive() const { return rect_preview_active_; }
+        void getRectPreview(float& x0, float& y0, float& x1, float& y1, bool& add_mode) const {
+            x0 = rect_x0_; y0 = rect_y0_; x1 = rect_x1_; y1 = rect_y1_; add_mode = rect_add_mode_;
+        }
+
+        // Polygon preview
+        void setPolygonPreview(const std::vector<std::pair<float, float>>& points, bool closed, bool add_mode = true);
+        void clearPolygonPreview();
+        [[nodiscard]] bool isPolygonPreviewActive() const { return polygon_preview_active_; }
+        [[nodiscard]] const std::vector<std::pair<float, float>>& getPolygonPoints() const { return polygon_points_; }
+        [[nodiscard]] bool isPolygonClosed() const { return polygon_closed_; }
+        [[nodiscard]] bool isPolygonAddMode() const { return polygon_add_mode_; }
+
+        // Lasso preview
+        void setLassoPreview(const std::vector<std::pair<float, float>>& points, bool add_mode = true);
+        void clearLassoPreview();
+        [[nodiscard]] bool isLassoPreviewActive() const { return lasso_preview_active_; }
+        [[nodiscard]] const std::vector<std::pair<float, float>>& getLassoPoints() const { return lasso_points_; }
+        [[nodiscard]] bool isLassoAddMode() const { return lasso_add_mode_; }
 
         // Preview selection
         void setPreviewSelection(lfs::core::Tensor* preview, bool add_mode = true) {
@@ -413,6 +457,8 @@ namespace lfs::vis {
         std::chrono::steady_clock::time_point selection_flash_start_time_;
         static constexpr float SELECTION_FLASH_DURATION_SEC = 0.5f;
 
+        mutable std::atomic<bool> overlay_animation_active_{false};
+
         size_t last_model_ptr_ = 0;
         std::chrono::steady_clock::time_point last_training_render_;
 
@@ -456,6 +502,20 @@ namespace lfs::vis {
         bool brush_saturation_mode_ = false;
         float brush_saturation_amount_ = 0.0f;
         lfs::rendering::SelectionMode selection_mode_ = lfs::rendering::SelectionMode::Centers;
+
+        // Selection shape preview state (for rectangle, polygon, lasso)
+        bool rect_preview_active_ = false;
+        float rect_x0_ = 0.0f, rect_y0_ = 0.0f, rect_x1_ = 0.0f, rect_y1_ = 0.0f;
+        bool rect_add_mode_ = true;
+
+        bool polygon_preview_active_ = false;
+        std::vector<std::pair<float, float>> polygon_points_;
+        bool polygon_closed_ = false;
+        bool polygon_add_mode_ = true;
+
+        bool lasso_preview_active_ = false;
+        std::vector<std::pair<float, float>> lasso_points_;
+        bool lasso_add_mode_ = true;
 
         // Ring mode hover preview (packed depth+id from atomicMin)
         unsigned long long hovered_depth_id_ = 0xFFFFFFFFFFFFFFFFULL;

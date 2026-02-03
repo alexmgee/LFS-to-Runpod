@@ -5,6 +5,7 @@
 #include "window_manager.hpp"
 #include "core/events.hpp"
 #include "core/logger.hpp"
+#include "python/python_runtime.hpp"
 // clang-format off
 // GLAD must be included before GLFW
 #include <glad/glad.h>

@@ -3,11 +3,17 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "core/tensor_debug.hpp"
+#include "core/tensor_trace.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 
 namespace lfs::core::debug {
+
+    TensorOpTracer& TensorOpTracer::instance() {
+        static TensorOpTracer inst;
+        return inst;
+    }
 
     TensorValidation validate_tensor_cpu(const Tensor& tensor) {
         TensorValidation result;

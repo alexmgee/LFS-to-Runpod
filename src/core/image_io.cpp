@@ -562,6 +562,11 @@ namespace lfs::core {
 
 namespace lfs::core::image_io {
 
+    BatchImageSaver& BatchImageSaver::instance() {
+        static BatchImageSaver instance;
+        return instance;
+    }
+
     BatchImageSaver::BatchImageSaver(size_t num_workers)
         : num_workers_(std::min(num_workers, std::min(size_t(8), size_t(std::thread::hardware_concurrency())))) {
 

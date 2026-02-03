@@ -14,7 +14,7 @@ using namespace lfs::core::param;
 class BackgroundImageTest : public ::testing::Test {
 protected:
     void SetUp() override { cudaSetDevice(0); }
-    void TearDown() override { GlobalArenaManager::instance().get_arena().emergency_cleanup(); }
+    void TearDown() override { GlobalArenaManager::instance().get_arena().full_reset(); }
 
     static Tensor createTestImage(const int c, const int h, const int w, const float value) {
         return Tensor::full({static_cast<size_t>(c), static_cast<size_t>(h), static_cast<size_t>(w)},

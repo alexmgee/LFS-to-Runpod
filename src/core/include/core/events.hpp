@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #pragma once
-#include "core/event_bus.hpp"
+#include "core/event_bridge/event_bridge.hpp"
 #include "geometry/bounding_box.hpp"
 #include <filesystem>
 #include <glm/glm.hpp>
@@ -22,18 +22,18 @@ namespace lfs::core {
                               SPZ,
                               HTML_VIEWER };
 
-// Clean event macro - uses lfs::core::event::bus()
+// Event macro using shared event bridge (solves singleton duplication between exe and Python module)
 #define EVENT(Name, ...)                                   \
     struct Name {                                          \
         using event_id = Name;                             \
         __VA_ARGS__                                        \
                                                            \
         void emit() const {                                \
-            ::lfs::core::event::bus().emit(*this);         \
+            ::lfs::event::emit(*this);                     \
         }                                                  \
                                                            \
         static auto when(auto&& handler) {                 \
-            return ::lfs::core::event::bus().when<Name>(   \
+            return ::lfs::event::when<Name>(               \
                 std::forward<decltype(handler)>(handler)); \
         }                                                  \
     }
@@ -51,13 +51,16 @@ namespace lfs::core {
             EVENT(ResetTraining, );
             EVENT(SwitchToLatestCheckpoint, );
             EVENT(SaveCheckpoint, std::optional<int> iteration;);
-            EVENT(LoadFile, std::filesystem::path path; bool is_dataset;);
+            EVENT(LoadFile, std::filesystem::path path; bool is_dataset; std::filesystem::path output_path;);
             EVENT(LoadCheckpointForTraining, std::filesystem::path checkpoint_path; std::filesystem::path dataset_path; std::filesystem::path output_path;);
+            EVENT(ImportColmapCameras, std::filesystem::path sparse_path;);
             EVENT(LoadConfigFile, std::filesystem::path path;);
             EVENT(ShowDatasetLoadPopup, std::filesystem::path dataset_path;);
             EVENT(ShowResumeCheckpointPopup, std::filesystem::path checkpoint_path;);
             EVENT(ClearScene, );
-            EVENT(SwitchToEditMode, ); // Keep trained model, discard dataset
+            EVENT(RequestExit, );
+            EVENT(ForceExit, );
+            EVENT(SwitchToEditMode, );
             EVENT(ResetCamera, );
             EVENT(ShowWindow, std::string window_name; bool show;);
             EVENT(ExecuteConsole, std::string command;);
@@ -96,6 +99,14 @@ namespace lfs::core {
             EVENT(SelectAll, );
             EVENT(CopySelection, );
             EVENT(PasteSelection, );
+            EVENT(SelectRect, float x0; float y0; float x1; float y1; int camera_index; std::string mode;);
+            EVENT(SelectByDescription, std::string description; int camera_index;);
+            EVENT(ApplySelectionMask, std::vector<uint8_t> mask;);
+            // Sequencer
+            EVENT(SequencerAddKeyframe, );
+            EVENT(SequencerUpdateKeyframe, ); // Update selected keyframe to current camera
+            EVENT(SequencerPlayPause, );
+            EVENT(SequencerExportVideo, int width; int height; int framerate; int crf;);
         } // namespace cmd
 
         // ============================================================================
@@ -108,7 +119,10 @@ namespace lfs::core {
             EVENT(AxesSettingsChanged, bool show_axes;);
             EVENT(TranslationGizmoSettingsChanged, bool enabled; float scale;);
             EVENT(SetToolbarTool, int tool_mode;);
-        } // namespace tools
+            EVENT(SetSelectionSubMode, int selection_mode;);
+            EVENT(ExecuteMirror, int axis;); // 0=X, 1=Y, 2=Z
+            EVENT(CancelActiveOperator, );   // Cancel and revert current operator
+        }                                    // namespace tools
 
         // ============================================================================
         // State - Notifications about what has happened (broadcasts)
@@ -119,7 +133,7 @@ namespace lfs::core {
             EVENT(TrainingProgress, int iteration; float loss; int num_gaussians; bool is_refining = false;);
             EVENT(TrainingPaused, int iteration;);
             EVENT(TrainingResumed, int iteration;);
-            EVENT(TrainingCompleted, int iteration; float final_loss; float elapsed_seconds; bool success; std::optional<std::string> error;);
+            EVENT(TrainingCompleted, int iteration; float final_loss; float elapsed_seconds; bool success; bool user_stopped; std::optional<std::string> error;);
             EVENT(TrainingStopped, int iteration; bool user_requested;);
 
             // Scene state
@@ -132,6 +146,7 @@ namespace lfs::core {
             EVENT(SceneCleared, );
             EVENT(ModelUpdated, int iteration; size_t num_gaussians;);
             EVENT(SceneChanged, );
+            EVENT(SelectionChanged, bool has_selection; int count;);
             // node_type: 0=SPLAT, 1=GROUP, 2=CROPBOX
             EVENT(PLYAdded, std::string name; size_t node_gaussians; size_t total_gaussians; bool is_visible; std::string parent_name; bool is_group; int node_type;);
             EVENT(PLYRemoved, std::string name; bool children_kept = false; std::string parent_of_removed;);
@@ -236,17 +251,17 @@ namespace lfs::core {
             EVENT(TrainingReadyToStart, );
             EVENT(WindowFocusLost, );
         } // namespace internal
-    } // namespace events
+    }     // namespace events
 
     // ============================================================================
     // Convenience functions
     // ============================================================================
-    template <event::Event E>
+    template <::lfs::event::Event E>
     inline void emit(const E& event) {
         event.emit();
     }
 
-    template <event::Event E>
+    template <::lfs::event::Event E>
     inline auto when(auto&& handler) {
         return E::when(std::forward<decltype(handler)>(handler));
     }

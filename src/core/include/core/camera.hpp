@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #include "core/camera_types.h"
 #include "core/cuda/undistort/undistort.hpp"
 #include "core/tensor.hpp"
@@ -14,7 +15,7 @@
 
 namespace lfs::core {
 
-    class Camera {
+    class LFS_CORE_API Camera {
     public:
         Camera() = default;
 

@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+# Fetch libvterm for terminal emulation
+include(${CMAKE_SOURCE_DIR}/cmake/FetchLibvterm.cmake)
+
 add_library(lfs_visualizer STATIC
         # Core
         visualizer.cpp
@@ -26,23 +29,24 @@ add_library(lfs_visualizer STATIC
         gui/gizmo_transform.cpp
         gui/html_viewer_export.cpp
         gui/ui_widgets.cpp
-        gui/localization_manager.cpp
-        gui/panels/main_panel.cpp
-        gui/panels/training_panel.cpp
-        gui/panels/crop_box_panel.cpp
-        gui/panels/ellipsoid_panel.cpp
-        gui/panels/transform_panel.cpp
-        gui/panels/gizmo_toolbar.cpp
-        gui/panels/scene_panel.cpp
+        gui/panels/windows_console_utils.cpp
         gui/panels/tools_panel.cpp
+        gui/panels/python_console_panel.cpp
+        gui/panels/python_scripts_panel.cpp
+        gui/editor/python_language_def.cpp
+        gui/editor/editor_theme.cpp
+        gui/editor/autocomplete/static_providers.cpp
+        gui/editor/autocomplete/autocomplete_manager.cpp
+        gui/editor/autocomplete/python_introspector.cpp
+        gui/editor/python_editor.cpp
+        gui/editor/console_output.cpp
+
+        # Terminal emulator
+        gui/terminal/pty_process.cpp
+        gui/terminal/terminal_widget.cpp
         gui/windows/file_browser.cpp
-        gui/windows/image_preview.cpp
-        gui/windows/export_dialog.cpp
-        gui/windows/notification_popup.cpp
-        gui/windows/save_directory_popup.cpp
-        gui/windows/resume_checkpoint_popup.cpp
-        gui/windows/exit_confirmation_popup.cpp
         gui/windows/disk_space_error_dialog.cpp
+        gui/windows/video_extractor_dialog.cpp
 
         # Scene management
         scene/scene.cpp
@@ -57,19 +61,46 @@ add_library(lfs_visualizer STATIC
         training/training_manager.cpp
 
         # Tools
+        tools/selection_tool.cpp
         tools/brush_tool.cpp
         tools/align_tool.cpp
-        tools/selection_tool.cpp
+        tools/unified_tool_registry.cpp
+        tools/builtin_tools.cpp
 
-        # Command system (undo/redo)
-        command/command_history.cpp
-        command/commands/cropbox_command.cpp
-        command/commands/ellipsoid_command.cpp
-        command/commands/crop_command.cpp
-        command/commands/selection_command.cpp
-        command/commands/saturation_command.cpp
-        command/commands/mirror_command.cpp
-        command/commands/transform_command.cpp
+        # Icon cache
+        gui/icon_cache.cpp
+
+        # Selection system
+        selection/selection_service.cpp
+
+        # Sequencer (camera animation)
+        sequencer/sequencer_controller.cpp
+        sequencer/sequencer_panel.cpp
+
+        # Operator system (Blender-style)
+        operator/operator_context.cpp
+        operator/operator_id.cpp
+        operator/operator_registry.cpp
+        operator/property_schema.cpp
+        operator/ops/align_ops.cpp
+        operator/ops/brush_ops.cpp
+        operator/ops/edit_ops.cpp
+        operator/ops/selection_ops.cpp
+        operator/ops/transform_ops.cpp
+
+        # Compositional operations system
+        operation/undo_entry.cpp
+        operation/undo_history.cpp
+        operation/operation.cpp
+        operation/pipeline.cpp
+        operation/ops/select_ops.cpp
+        operation/ops/edit_ops.cpp
+        operation/ops/transform_ops.cpp
+
+        # IPC for MCP integration
+        ipc/selection_server.cpp
+        ipc/view_context.cpp
+
         gui/panels/menu_bar.cpp
         gui/panels/menu_bar.hpp
         gui/utils/windows_utils.cpp
@@ -96,11 +127,15 @@ target_link_libraries(lfs_visualizer
         lfs_io
         lfs_rendering
         lfs_training
+        lfs_python_runtime
+        $<$<BOOL:${BUILD_PYTHON_BINDINGS}>:lfs_python_utils>
+        lfs_sequencer      # Camera animation sequencer
         glad::glad
         glfw
         imgui::imgui
         implot::implot
         imguizmo::imguizmo # 3D manipulation gizmo
+        imgui_textedit     # Syntax highlighting text editor
         glm::glm
         TBB::tbb
         spdlog::spdlog
@@ -109,7 +144,13 @@ target_link_libraries(lfs_visualizer
         OpenSSL::Crypto
         CUDA::cudart
         ${OPENGL_LIBRARIES}
+        vterm              # Terminal emulator (libvterm)
 )
+
+# Python support: define LFS_BUILD_PYTHON_BINDINGS when bindings are enabled
+if(BUILD_PYTHON_BINDINGS)
+    target_compile_definitions(lfs_visualizer PRIVATE LFS_BUILD_PYTHON_BINDINGS)
+endif()
 
 # Set C++ standard
 target_compile_features(lfs_visualizer PUBLIC cxx_std_23)
@@ -199,13 +240,14 @@ elseif (UNIX AND NOT APPLE)
             GL
             GLU
             X11
+            util  # PTY support (forkpty)
     )
 endif ()
 
-# Export only the public header
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/visualizer/visualizer.hpp
-        DESTINATION include/visualizer
-)
+if(NOT BUILD_PORTABLE)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/visualizer/visualizer.hpp
+            DESTINATION include/visualizer)
+endif()
 
 # Optionally install resources
 install(DIRECTORY ${VISUALIZER_SOURCE_RESOURCE_DIR}/

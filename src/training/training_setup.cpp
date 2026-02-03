@@ -83,10 +83,7 @@ namespace lfs::training {
                 return {};
 
             } else if constexpr (std::is_same_v<T, lfs::io::LoadedScene>) {
-                // Full scene data - store cameras and point cloud (defer SplatData creation)
-
-                // Store cameras and scene center in Scene
-                scene.setTrainCameras(data.cameras);
+                // Full scene data - cameras added as nodes, point cloud stored for initialization
                 scene.setInitialPointCloud(data.point_cloud);
                 scene.setSceneCenter(load_result->scene_center);
                 scene.setImagesHaveAlpha(load_result->images_have_alpha);
@@ -186,7 +183,7 @@ namespace lfs::training {
                 }
 
                 // Get camera info for train/val splits
-                const auto& cameras = data.cameras->get_cameras();
+                const auto& cameras = data.cameras;
                 const bool enable_eval = params.optimization.enable_eval;
                 const int test_every = params.dataset.test_every;
 
@@ -214,13 +211,10 @@ namespace lfs::training {
                     cameras_group_id,
                     train_count);
 
-                // Add individual training camera nodes (with mask_path if available)
+                // Add individual training camera nodes
                 for (size_t i = 0; i < cameras.size(); ++i) {
-                    if (!enable_eval || (i % test_every) != 0) { // Training camera (all if no eval)
-                        scene.addCamera(cameras[i]->image_name(), train_cameras_id,
-                                        static_cast<int>(i), cameras[i]->uid(),
-                                        lfs::core::path_to_utf8(cameras[i]->image_path()),
-                                        lfs::core::path_to_utf8(cameras[i]->mask_path()));
+                    if (!enable_eval || (i % test_every) != 0) {
+                        scene.addCamera(cameras[i]->image_name(), train_cameras_id, cameras[i]);
                     }
                 }
 
@@ -231,13 +225,9 @@ namespace lfs::training {
                         cameras_group_id,
                         val_count);
 
-                    // Add individual validation camera nodes (with mask_path if available)
                     for (size_t i = 0; i < cameras.size(); ++i) {
-                        if ((i % test_every) == 0) { // Validation camera
-                            scene.addCamera(cameras[i]->image_name(), val_cameras_id,
-                                            static_cast<int>(i), cameras[i]->uid(),
-                                            lfs::core::path_to_utf8(cameras[i]->image_path()),
-                                            lfs::core::path_to_utf8(cameras[i]->mask_path()));
+                        if ((i % test_every) == 0) {
+                            scene.addCamera(cameras[i]->image_name(), val_cameras_id, cameras[i]);
                         }
                     }
                 }
@@ -447,7 +437,6 @@ namespace lfs::training {
                 return {};
 
             } else if constexpr (std::is_same_v<T, lfs::io::LoadedScene>) {
-                scene.setTrainCameras(data.cameras);
                 scene.setInitialPointCloud(data.point_cloud);
                 scene.setSceneCenter(load_result.scene_center);
                 scene.setImagesHaveAlpha(load_result.images_have_alpha);
@@ -516,7 +505,7 @@ namespace lfs::training {
                 }
 
                 // Build camera hierarchy
-                const auto& cameras = data.cameras->get_cameras();
+                const auto& cameras = data.cameras;
                 const bool enable_eval = params.optimization.enable_eval;
                 const int test_every = params.dataset.test_every;
 
@@ -534,10 +523,7 @@ namespace lfs::training {
 
                 for (size_t i = 0; i < cameras.size(); ++i) {
                     if (!enable_eval || (i % test_every) != 0) {
-                        scene.addCamera(cameras[i]->image_name(), train_cameras_id,
-                                        static_cast<int>(i), cameras[i]->uid(),
-                                        lfs::core::path_to_utf8(cameras[i]->image_path()),
-                                        lfs::core::path_to_utf8(cameras[i]->mask_path()));
+                        scene.addCamera(cameras[i]->image_name(), train_cameras_id, cameras[i]);
                     }
                 }
 
@@ -546,10 +532,7 @@ namespace lfs::training {
                         std::format("Validation ({})", val_count), cameras_group_id, val_count);
                     for (size_t i = 0; i < cameras.size(); ++i) {
                         if ((i % test_every) == 0) {
-                            scene.addCamera(cameras[i]->image_name(), val_cameras_id,
-                                            static_cast<int>(i), cameras[i]->uid(),
-                                            lfs::core::path_to_utf8(cameras[i]->image_path()),
-                                            lfs::core::path_to_utf8(cameras[i]->mask_path()));
+                            scene.addCamera(cameras[i]->image_name(), val_cameras_id, cameras[i]);
                         }
                     }
                 }

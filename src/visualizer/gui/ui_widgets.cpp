@@ -4,8 +4,8 @@
 
 #include "gui/ui_widgets.hpp"
 #include "core/image_io.hpp"
-#include "gui/dpi_scale.hpp"
-#include "gui/localization_manager.hpp"
+#include "python/python_runtime.hpp"
+#include "core/event_bridge/localization_manager.hpp"
 #include "gui/string_keys.hpp"
 #include "internal/resource_paths.hpp"
 #include "scene/scene_manager.hpp"
@@ -146,7 +146,7 @@ namespace lfs::vis::gui::widgets {
 
     void TableRow(const char* label, const char* format, ...) {
         ImGui::Text("%s:", label);
-        ImGui::SameLine(120 * getDpiScale()); // Align values at column 120
+        ImGui::SameLine(120 * lfs::python::get_shared_dpi_scale()); // Align values at column 120
 
         va_list args;
         va_start(args, format);
@@ -174,7 +174,7 @@ namespace lfs::vis::gui::widgets {
             plot_label,
             min_val,
             max_val,
-            ImVec2(ImGui::GetContentRegionAvail().x, 80 * getDpiScale()));
+            ImVec2(ImGui::GetContentRegionAvail().x, 80 * lfs::python::get_shared_dpi_scale()));
     }
 
     void DrawModeStatus(const UIContext& ctx) {
@@ -509,7 +509,7 @@ namespace lfs::vis::gui::widgets {
         constexpr float COLOR_OFFSET = 0.2f;
 
         const auto& t = theme();
-        const float dpi = getDpiScale();
+        const float dpi = lfs::python::get_shared_dpi_scale();
         const float size = PICKER_SIZE_BASE * dpi;
 
         ImGui::PushID(label);
@@ -585,7 +585,7 @@ namespace lfs::vis::gui::widgets {
         constexpr float HIT_RADIUS_BASE = 10.0f;
 
         const auto& t = theme();
-        const float dpi = getDpiScale();
+        const float dpi = lfs::python::get_shared_dpi_scale();
         const float size = DIAGRAM_SIZE_BASE * dpi;
         const float point_radius = POINT_RADIUS_BASE * dpi;
         const float hit_radius = HIT_RADIUS_BASE * dpi;
@@ -729,7 +729,7 @@ namespace lfs::vis::gui::widgets {
         constexpr float MIDPOINT = 0.5f;
 
         const auto& t = theme();
-        const float dpi = getDpiScale();
+        const float dpi = lfs::python::get_shared_dpi_scale();
         const ImVec2 plot_size(PLOT_WIDTH_BASE * dpi, PLOT_HEIGHT_BASE * dpi);
 
         float xs[NUM_POINTS];

@@ -5,10 +5,26 @@
 #include "main_loop.hpp"
 #include "core/logger.hpp"
 
+#include <atomic>
+#include <csignal>
+
 namespace lfs::vis {
+
+    namespace {
+        std::atomic<bool> g_interrupt_requested{false};
+
+        void signal_handler(int signal) {
+            if (signal == SIGINT || signal == SIGTERM) {
+                g_interrupt_requested.store(true, std::memory_order_release);
+            }
+        }
+    } // namespace
 
     void MainLoop::run() {
         LOG_INFO("Main loop starting");
+
+        std::signal(SIGINT, signal_handler);
+        std::signal(SIGTERM, signal_handler);
 
         if (init_callback_) {
             if (!init_callback_()) {
@@ -19,11 +35,13 @@ namespace lfs::vis {
 
         LOG_DEBUG("Entering main render loop");
 
-        // Continue running while:
-        // - Either we don't have a should_close callback (run forever)
-        // - OR we have one and it returns false (not time to close)
         while (true) {
-            if (!should_close_callback_ || should_close_callback_()) {
+            if (g_interrupt_requested.load(std::memory_order_acquire)) {
+                LOG_INFO("Interrupt signal received, shutting down");
+                break;
+            }
+
+            if (should_close_callback_ && should_close_callback_()) {
                 LOG_DEBUG("Should close callback requested exit");
                 break;
             }

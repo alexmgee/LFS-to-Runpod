@@ -1648,7 +1648,9 @@ namespace lfs::core {
     }
 
     MaskedTensorProxy::operator Tensor() const {
-        return tensor_->masked_select(mask_);
+        // For 1D mask on ND tensor, use row selection (PyTorch-style)
+        // tensor[bool_mask] selects rows where mask is True
+        return tensor_->index_select(0, mask_);
     }
 
     void TensorIndexer::operator=(float value) {
@@ -1674,11 +1676,9 @@ namespace lfs::core {
 
     TensorIndexer::operator Tensor() const {
         if (indices_.size() == 1) {
-            if (indices_[0].dtype() == DataType::Bool) {
-                return tensor_->masked_select(indices_[0]);
-            } else {
-                return indices_[0].ndim() == 1 ? tensor_->index_select(0, indices_[0]) : tensor_->take(indices_[0]);
-            }
+            // For both bool and int indices, use index_select for row selection
+            // This matches PyTorch: tensor[bool_mask] selects rows where mask is True
+            return indices_[0].ndim() == 1 ? tensor_->index_select(0, indices_[0]) : tensor_->take(indices_[0]);
         }
         return Tensor();
     }

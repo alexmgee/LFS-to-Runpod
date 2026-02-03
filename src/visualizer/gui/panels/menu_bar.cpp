@@ -8,24 +8,35 @@
 #include "core/logger.hpp"
 #include "core/tensor_trace.hpp"
 #include "core/training_snapshot.hpp"
-#include "gui/dpi_scale.hpp"
+#include "python/python_runtime.hpp"
 #ifdef WIN32
 #include <shellapi.h>
 #include <winsock2.h>
 #endif
-#include "gui/localization_manager.hpp"
+#include "core/event_bridge/localization_manager.hpp"
 #include "gui/string_keys.hpp"
+#include "gui/ui_widgets.hpp"
 #include "gui/utils/windows_utils.hpp"
 #include "theme/theme.hpp"
 
 using namespace lichtfeld::Strings;
 
-#include <GLFW/glfw3.h>
 #include <glad/glad.h>
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
 #include <imgui.h>
 
 #include <cfloat>
 #include <cstdlib>
+
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+#include "python/runner.hpp"
+#include <Python.h>
+// Python.h defines PLATFORM macro that conflicts with string_keys.hpp
+#ifdef PLATFORM
+#undef PLATFORM
+#endif
+#endif
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
@@ -39,6 +50,27 @@ namespace lfs::vis::gui {
             if (thumb.texture)
                 glDeleteTextures(1, &thumb.texture);
         }
+    }
+
+    void MenuBar::requestThumbnail(const std::string& video_id) {
+        startThumbnailDownload(video_id);
+    }
+
+    void MenuBar::processThumbnails() {
+        updateThumbnails();
+    }
+
+    bool MenuBar::isThumbnailReady(const std::string& video_id) const {
+        const auto it = thumbnails_.find(video_id);
+        return it != thumbnails_.end() && it->second.state == Thumbnail::State::READY;
+    }
+
+    uint64_t MenuBar::getThumbnailTexture(const std::string& video_id) const {
+        const auto it = thumbnails_.find(video_id);
+        if (it != thumbnails_.end() && it->second.state == Thumbnail::State::READY) {
+            return static_cast<uint64_t>(it->second.texture);
+        }
+        return 0;
     }
 
     void MenuBar::startThumbnailDownload(const std::string& video_id) {
@@ -99,56 +131,21 @@ namespace lfs::vis::gui {
         }
     }
 
-    void MenuBar::renderVideoCard(const char* title, const char* video_id, const char* url) {
-        const float scale = getDpiScale();
-        const float CARD_WIDTH = 160.0f * scale;
-        const float CARD_HEIGHT = 90.0f * scale;
-        const float CARD_ROUNDING = 4.0f * scale;
-        const float PLAY_ICON_RADIUS = 15.0f * scale;
-
-        if (!thumbnails_.contains(video_id))
-            startThumbnailDownload(video_id);
-
-        auto& thumb = thumbnails_[video_id];
-        const auto& t = theme();
-        const ImVec2 card_size(CARD_WIDTH, CARD_HEIGHT + 30.0f * scale);
-        const ImVec2 cursor = ImGui::GetCursorScreenPos();
-
-        if (ImGui::InvisibleButton(video_id, card_size))
-            openURL(url);
-
-        const bool hovered = ImGui::IsItemHovered();
-        if (hovered)
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-
-        auto* const dl = ImGui::GetWindowDrawList();
-        const ImU32 bg = hovered ? toU32(lighten(t.palette.surface_bright, 0.1f)) : toU32(t.palette.surface_bright);
-        dl->AddRectFilled(cursor, {cursor.x + card_size.x, cursor.y + card_size.y}, bg, CARD_ROUNDING);
-
-        if (thumb.state == Thumbnail::State::READY && thumb.texture) {
-            dl->AddImage(static_cast<ImTextureID>(thumb.texture),
-                         cursor, {cursor.x + CARD_WIDTH, cursor.y + CARD_HEIGHT});
-        } else {
-            dl->AddRectFilled(cursor, {cursor.x + CARD_WIDTH, cursor.y + CARD_HEIGHT},
-                              toU32(darken(t.palette.surface_bright, 0.1f)), CARD_ROUNDING);
-
-            const float cx = cursor.x + CARD_WIDTH * 0.5f;
-            const float cy = cursor.y + CARD_HEIGHT * 0.5f;
-            dl->AddTriangleFilled(
-                {cx - PLAY_ICON_RADIUS * 0.4f, cy - PLAY_ICON_RADIUS * 0.6f},
-                {cx - PLAY_ICON_RADIUS * 0.4f, cy + PLAY_ICON_RADIUS * 0.6f},
-                {cx + PLAY_ICON_RADIUS * 0.6f, cy},
-                toU32(withAlpha(t.palette.text, 0.6f)));
-
-            if (thumb.state == Thumbnail::State::LOADING)
-                dl->AddText({cursor.x + 4 * scale, cursor.y + CARD_HEIGHT - 16 * scale}, toU32(t.palette.text_dim), LOC(GettingStarted::LOADING));
-        }
-
-        dl->AddText({cursor.x + 4 * scale, cursor.y + CARD_HEIGHT + 4.0f * scale}, toU32(t.palette.text), title);
+    namespace {
+        MenuBar* g_menu_bar_instance = nullptr;
     }
 
     void MenuBar::render() {
         const auto& t = theme();
+
+        // Register callbacks for Python-driven menu
+        if (g_menu_bar_instance != this) {
+            g_menu_bar_instance = this;
+            python::set_show_python_console_callback([]() {
+                if (g_menu_bar_instance)
+                    g_menu_bar_instance->triggerShowPythonConsole();
+            });
+        }
 
         if (fonts_.regular)
             ImGui::PushFont(fonts_.regular);
@@ -166,88 +163,14 @@ namespace lfs::vis::gui {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, t.menu.item_spacing);
 
         if (ImGui::BeginMainMenuBar()) {
-            if (ImGui::BeginMenu(LOC(Menu::File::MENU))) {
-                const bool can_clear = !can_clear_ || can_clear_();
-                if (ImGui::MenuItem(LOC(Menu::File::NEW_PROJECT), nullptr, false, can_clear) && on_new_project_) {
-                    on_new_project_();
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem(LOC(Menu::File::IMPORT_DATASET)) && on_import_dataset_) {
-                    on_import_dataset_();
-                }
-                if (ImGui::MenuItem(LOC(Menu::File::IMPORT_PLY)) && on_import_ply_) {
-                    on_import_ply_();
-                }
-                if (ImGui::MenuItem(LOC(Menu::File::IMPORT_CHECKPOINT)) && on_import_checkpoint_) {
-                    on_import_checkpoint_();
-                }
-                if (ImGui::MenuItem(LOC(Menu::File::IMPORT_CONFIG)) && on_import_config_) {
-                    on_import_config_();
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem(LOC(Menu::File::EXPORT)) && on_export_) {
-                    on_export_();
-                }
-                if (ImGui::MenuItem(LOC(Menu::File::EXPORT_CONFIG)) && on_export_config_) {
-                    on_export_config_();
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem(LOC(Menu::File::EXIT)) && on_exit_) {
-                    on_exit_();
-                }
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu(LOC(Menu::Edit::MENU))) {
-                if (ImGui::MenuItem(LOC(Menu::Edit::INPUT_SETTINGS))) {
-                    show_input_settings_ = true;
-                }
-                ImGui::Separator();
-                if (ImGui::BeginMenu(LOC(Preferences::LANGUAGE))) {
-                    auto& loc = lichtfeld::LocalizationManager::getInstance();
-                    const auto& current_lang = loc.getCurrentLanguage();
-                    const auto available_langs = loc.getAvailableLanguages();
-                    const auto lang_names = loc.getAvailableLanguageNames();
-
-                    for (size_t i = 0; i < available_langs.size(); ++i) {
-                        const bool is_selected = (available_langs[i] == current_lang);
-                        if (ImGui::MenuItem(lang_names[i].c_str(), nullptr, is_selected)) {
-                            loc.setLanguage(available_langs[i]);
-                        }
+            if (python::has_menu_bar_entries()) {
+                auto entries = python::get_menu_bar_entries();
+                for (const auto& entry : entries) {
+                    if (ImGui::BeginMenu(LOC(entry.label.c_str()))) {
+                        python::draw_menu_bar_entry(entry.idname);
+                        ImGui::EndMenu();
                     }
-                    ImGui::EndMenu();
                 }
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu(LOC(Menu::View::MENU))) {
-                if (ImGui::BeginMenu(LOC(Menu::View::THEME))) {
-                    const bool is_dark = (theme().name == "Dark");
-                    if (ImGui::MenuItem(LOC(Menu::View::THEME_DARK), nullptr, is_dark)) {
-                        setTheme(darkTheme());
-                        saveThemePreference(true);
-                    }
-                    if (ImGui::MenuItem(LOC(Menu::View::THEME_LIGHT), nullptr, !is_dark)) {
-                        setTheme(lightTheme());
-                        saveThemePreference(false);
-                    }
-                    ImGui::EndMenu();
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem(LOC(Menu::View::DEBUG_INFO))) {
-                    show_debug_window_ = true;
-                }
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu(LOC(Menu::Help::MENU))) {
-                if (ImGui::MenuItem(LOC(Menu::Help::GETTING_STARTED))) {
-                    show_getting_started_ = true;
-                }
-                if (ImGui::MenuItem(LOC(Menu::Help::ABOUT))) {
-                    show_about_window_ = true;
-                }
-                ImGui::EndMenu();
             }
 
             const float h = ImGui::GetWindowHeight();
@@ -262,10 +185,7 @@ namespace lfs::vis::gui {
         if (fonts_.regular)
             ImGui::PopFont();
 
-        renderGettingStartedWindow();
-        renderAboutWindow();
-        renderInputSettingsWindow();
-        renderDebugWindow();
+        renderPluginInstallPopup();
     }
 
     void MenuBar::openURL(const char* url) {
@@ -277,902 +197,102 @@ namespace lfs::vis::gui {
 #endif
     }
 
-    void MenuBar::renderGettingStartedWindow() {
-        if (!show_getting_started_)
-            return;
-
-        constexpr ImGuiWindowFlags WINDOW_FLAGS = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
-        const float scale = getDpiScale();
-        const float WINDOW_ROUNDING = 8.0f * scale;
-        const float WINDOW_PADDING = 20.0f * scale;
-        const float ITEM_SPACING_Y = 12.0f * scale;
-        const float VIDEO_SPACING = 16.0f * scale;
-        const float INDENT = 25.0f * scale;
-
-        const auto& t = theme();
-
-        ImGui::SetNextWindowSize(ImVec2(560 * scale, 0), ImGuiCond_Once);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, WINDOW_ROUNDING);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {WINDOW_PADDING, WINDOW_PADDING});
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {8.0f * scale, ITEM_SPACING_Y});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(t.palette.surface, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Text, t.palette.text);
-        ImGui::PushStyleColor(ImGuiCol_TitleBg, t.palette.surface);
-        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.palette.surface_bright);
-        ImGui::PushStyleColor(ImGuiCol_Border, withAlpha(t.palette.info, 0.3f));
-
-        if (ImGui::Begin(LOC(Window::GETTING_STARTED), &show_getting_started_, WINDOW_FLAGS)) {
-            updateThumbnails();
-
-            if (fonts_.heading)
-                ImGui::PushFont(fonts_.heading);
-            ImGui::TextColored(t.palette.info, LOC(GettingStarted::TITLE));
-            if (fonts_.heading)
-                ImGui::PopFont();
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::TextWrapped("%s", LOC(GettingStarted::DESCRIPTION));
-            ImGui::Spacing();
-            ImGui::Spacing();
-
-            // Row 1
-            renderVideoCard(LOC(GettingStarted::VIDEO_INTRO), "b1Olu_IU1sM", "https://www.youtube.com/watch?v=b1Olu_IU1sM");
-            ImGui::SameLine(0.0f, VIDEO_SPACING);
-            renderVideoCard(LOC(GettingStarted::VIDEO_LATEST), "zWIzBHRc-60", "https://www.youtube.com/watch?v=zWIzBHRc-60");
-            ImGui::SameLine(0.0f, VIDEO_SPACING);
-            renderVideoCard(LOC(GettingStarted::VIDEO_MASKS), "956qR8N3Xk4", "https://www.youtube.com/watch?v=956qR8N3Xk4");
-
-            // Row 2: Dataset tutorials
-            renderVideoCard(LOC(GettingStarted::VIDEO_REALITY_SCAN), "JWmkhTlbDvg", "https://www.youtube.com/watch?v=JWmkhTlbDvg");
-            ImGui::SameLine(0.0f, VIDEO_SPACING);
-            renderVideoCard(LOC(GettingStarted::VIDEO_COLMAP), "-3TBbukYN00", "https://www.youtube.com/watch?v=-3TBbukYN00");
-            ImGui::SameLine(0.0f, VIDEO_SPACING);
-            renderVideoCard(LOC(GettingStarted::VIDEO_LICHTFELD), "aX8MTlr9Ypc", "https://www.youtube.com/watch?v=aX8MTlr9Ypc");
-
-            ImGui::Spacing();
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            if (fonts_.section)
-                ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, LOC(GettingStarted::WIKI_SECTION));
-            if (fonts_.section)
-                ImGui::PopFont();
-            ImGui::Spacing();
-
-            static constexpr const char* WIKI_URL = "https://github.com/MrNeRF/LichtFeld-Studio/wiki";
-            ImGui::Indent(INDENT);
-            ImGui::PushStyleColor(ImGuiCol_Text, lighten(t.palette.info, 0.3f));
-            ImGui::TextWrapped("%s", WIKI_URL);
-            ImGui::PopStyleColor();
-
-            if (ImGui::IsItemHovered())
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked())
-                openURL(WIKI_URL);
-
-            ImGui::Unindent(INDENT);
-        }
-        ImGui::End();
-
-        ImGui::PopStyleColor(5);
-        ImGui::PopStyleVar(3);
+    void MenuBar::setOnShowPythonConsole(std::function<void()> callback) {
+        on_show_python_console_ = std::move(callback);
     }
 
-    void MenuBar::renderAboutWindow() {
-        if (!show_about_window_) {
+    void MenuBar::renderPluginInstallPopup() {
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+        if (!show_plugin_install_popup_)
             return;
-        }
 
-        constexpr ImGuiWindowFlags WINDOW_FLAGS = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
-        const float scale = getDpiScale();
-        ImGui::SetNextWindowSize(ImVec2(750 * scale, 0), ImGuiCond_Once);
+        lfs::python::ensure_initialized();
 
+        const float scale = lfs::python::get_shared_dpi_scale();
+        const auto& t = theme();
+
+        ImGui::SetNextWindowSize({400.0f * scale, 0}, ImGuiCond_Always);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * scale, 20.0f * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale, 10.0f * scale));
-        const auto& t = theme();
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * scale, 16.0f * scale));
         ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(t.palette.surface, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Text, t.palette.text);
-        ImGui::PushStyleColor(ImGuiCol_TitleBg, t.palette.surface);
-        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.palette.surface_bright);
-        ImGui::PushStyleColor(ImGuiCol_Border, withAlpha(t.palette.info, 0.3f));
-        ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, t.palette.surface_bright);
-        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, lighten(t.palette.surface_bright, 0.15f));
 
-        static constexpr const char* REPO_URL = "https://github.com/MrNeRF/LichtFeld-Studio";
-        static constexpr const char* WEBSITE_URL = "https://lichtfeld.io";
+        if (ImGui::Begin("Install Plugin", &show_plugin_install_popup_,
+                         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize)) {
 
-        if (ImGui::Begin(LOC(Window::ABOUT), &show_about_window_, WINDOW_FLAGS)) {
-            if (fonts_.heading)
-                ImGui::PushFont(fonts_.heading);
-            ImGui::TextColored(t.palette.info, LOC(About::TITLE));
-            if (fonts_.heading)
-                ImGui::PopFont();
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
+            ImGui::Text("GitHub URL or shorthand:");
+            ImGui::SetNextItemWidth(-1);
 
-            ImGui::TextWrapped("%s", LOC(About::DESCRIPTION));
-
-            ImGui::Spacing();
-            ImGui::Spacing();
-
-            if (fonts_.section)
-                ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, LOC(About::BUILD_INFO));
-            if (fonts_.section)
-                ImGui::PopFont();
-            ImGui::Spacing();
-
-            constexpr ImGuiTableFlags TABLE_FLAGS = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
-            if (ImGui::BeginTable("build_info_table", 2, TABLE_FLAGS)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-                const ImVec4 LABEL_COLOR = t.palette.text_dim;
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::VERSION));
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", GIT_TAGGED_VERSION);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (ImGui::IsItemClicked())
-                    ImGui::SetClipboardText(GIT_TAGGED_VERSION);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::COMMIT));
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", GIT_COMMIT_HASH_SHORT);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (ImGui::IsItemClicked())
-                    ImGui::SetClipboardText(GIT_COMMIT_HASH_SHORT);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::BUILD_TYPE));
-                ImGui::TableNextColumn();
-#ifdef DEBUG_BUILD
-                ImGui::Text("%s", LOC(About::BuildType::DEBUG));
-#else
-                ImGui::Text("%s", LOC(About::BuildType::RELEASE));
-#endif
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::PLATFORM));
-                ImGui::TableNextColumn();
-#ifdef PLATFORM_WINDOWS
-                ImGui::Text("%s", LOC(About::Platform::WINDOWS));
-#elif defined(PLATFORM_LINUX)
-                ImGui::Text("%s", LOC(About::Platform::LINUX));
-#else
-                ImGui::Text("%s", LOC(About::Platform::UNKNOWN));
-#endif
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(LABEL_COLOR, LOC(About::BuildInfo::CUDA_GL_INTEROP));
-                ImGui::TableNextColumn();
-#ifdef CUDA_GL_INTEROP_ENABLED
-                ImGui::Text("%s", LOC(About::Interop::ENABLED));
-#else
-                ImGui::Text("%s", LOC(About::Interop::DISABLED));
-#endif
-
-                ImGui::EndTable();
+            char buf[512];
+            strncpy(buf, plugin_install_url_.c_str(), sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = '\0';
+            if (ImGui::InputText("##url", buf, sizeof(buf))) {
+                plugin_install_url_ = buf;
             }
 
             ImGui::Spacing();
+            ImGui::TextDisabled("Examples: owner/repo, github:owner/repo");
             ImGui::Spacing();
 
-            if (fonts_.section)
-                ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, LOC(About::LINKS));
-            if (fonts_.section)
-                ImGui::PopFont();
-            ImGui::Spacing();
-
-            const ImVec4 LINK_COLOR = lighten(t.palette.info, 0.3f);
-
-            ImGui::Text("%s", LOC(About::REPOSITORY));
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, LINK_COLOR);
-            ImGui::Text("%s", REPO_URL);
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered())
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked())
-                openURL(REPO_URL);
-
-            ImGui::Text("%s", LOC(About::WEBSITE));
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, LINK_COLOR);
-            ImGui::Text("%s", WEBSITE_URL);
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered())
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked())
-                openURL(WEBSITE_URL);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::TextColored(t.palette.text_dim, LOC(About::AUTHORS));
-            ImGui::SameLine();
-            ImGui::TextColored(darken(t.palette.text_dim, 0.15f), " | ");
-            ImGui::SameLine();
-            ImGui::TextColored(t.palette.text_dim, LOC(About::LICENSE));
-        }
-        ImGui::End();
-
-        ImGui::PopStyleColor(7);
-        ImGui::PopStyleVar(3);
-    }
-
-    void MenuBar::setOnNewProject(std::function<void()> callback) {
-        on_new_project_ = std::move(callback);
-    }
-
-    void MenuBar::setOnImportDataset(std::function<void()> callback) {
-        on_import_dataset_ = std::move(callback);
-    }
-
-    void MenuBar::setOnImportPLY(std::function<void()> callback) {
-        on_import_ply_ = std::move(callback);
-    }
-
-    void MenuBar::setOnImportCheckpoint(std::function<void()> callback) {
-        on_import_checkpoint_ = std::move(callback);
-    }
-
-    void MenuBar::setOnImportConfig(std::function<void()> callback) {
-        on_import_config_ = std::move(callback);
-    }
-
-    void MenuBar::setOnExport(std::function<void()> callback) {
-        on_export_ = std::move(callback);
-    }
-
-    void MenuBar::setOnExportConfig(std::function<void()> callback) {
-        on_export_config_ = std::move(callback);
-    }
-
-    void MenuBar::setOnExit(std::function<void()> callback) {
-        on_exit_ = std::move(callback);
-    }
-
-    void MenuBar::setCanClearCheck(std::function<bool()> check) {
-        can_clear_ = std::move(check);
-    }
-
-    namespace {
-        const char* getToolModeName(input::ToolMode mode) {
-            switch (mode) {
-            case input::ToolMode::GLOBAL: return LOC(lichtfeld::Strings::InputSettings::MODE_GLOBAL);
-            case input::ToolMode::SELECTION: return LOC(lichtfeld::Strings::InputSettings::MODE_SELECTION);
-            case input::ToolMode::BRUSH: return LOC(lichtfeld::Strings::InputSettings::MODE_BRUSH);
-            case input::ToolMode::TRANSLATE: return LOC(lichtfeld::Strings::InputSettings::MODE_TRANSLATE);
-            case input::ToolMode::ROTATE: return LOC(lichtfeld::Strings::InputSettings::MODE_ROTATE);
-            case input::ToolMode::SCALE: return LOC(lichtfeld::Strings::InputSettings::MODE_SCALE);
-            case input::ToolMode::ALIGN: return LOC(lichtfeld::Strings::InputSettings::MODE_ALIGN);
-            case input::ToolMode::CROP_BOX: return LOC(lichtfeld::Strings::InputSettings::MODE_CROP_BOX);
-            default: return LOC(lichtfeld::Strings::InputSettings::MODE_UNKNOWN);
-            }
-        }
-    } // namespace
-
-    void MenuBar::renderBindingRow(const input::Action action, const input::ToolMode mode) {
-        const auto& t = theme();
-        const bool is_rebinding = rebinding_action_.has_value() &&
-                                  *rebinding_action_ == action &&
-                                  rebinding_mode_ == mode;
-
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextColored(t.palette.text, "%s", input::getActionName(action).c_str());
-
-        ImGui::TableNextColumn();
-        if (is_rebinding) {
-            if (waiting_for_double_click_) {
-                ImGui::TextColored(t.palette.warning, "%s", LOC(lichtfeld::Strings::InputSettings::CLICK_AGAIN_DOUBLE));
-            } else {
-                ImGui::TextColored(t.palette.warning, "%s", LOC(lichtfeld::Strings::InputSettings::PRESS_KEY_OR_CLICK));
-            }
-        } else {
-            const std::string desc = input_bindings_->getTriggerDescription(action, mode);
-            ImGui::TextColored(t.palette.info, "%s", desc.c_str());
-        }
-
-        ImGui::TableNextColumn();
-        const int unique_id = static_cast<int>(action) * 100 + static_cast<int>(mode);
-        if (is_rebinding) {
-            ImGui::PushStyleColor(ImGuiCol_Button, withAlpha(t.palette.error, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.palette.error);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, lighten(t.palette.error, 0.1f));
-            char label[64];
-            snprintf(label, sizeof(label), "%s##%d", LOC(lichtfeld::Strings::InputSettings::CANCEL), unique_id);
-            if (ImGui::Button(label, ImVec2(-1, 0))) {
-                cancelCapture();
-            }
-            ImGui::PopStyleColor(3);
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, withAlpha(t.palette.info, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.palette.info);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, lighten(t.palette.info, 0.1f));
-            char label[64];
-            snprintf(label, sizeof(label), "%s##%d", LOC(lichtfeld::Strings::InputSettings::REBIND), unique_id);
-            if (ImGui::Button(label, ImVec2(-1, 0))) {
-                rebinding_action_ = action;
-                rebinding_mode_ = mode;
-            }
-            ImGui::PopStyleColor(3);
-        }
-    }
-
-    void MenuBar::captureKey(const int key, const int mods) {
-        if (!rebinding_action_.has_value() || !input_bindings_) {
-            return;
-        }
-
-        if (key == GLFW_KEY_ESCAPE) {
-            cancelCapture();
-            return;
-        }
-
-        // Ignore modifier-only keys
-        if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT ||
-            key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL ||
-            key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT ||
-            key == GLFW_KEY_LEFT_SUPER || key == GLFW_KEY_RIGHT_SUPER) {
-            return;
-        }
-
-        const input::KeyTrigger trigger{key, mods, false};
-        input_bindings_->setBinding(rebinding_mode_, *rebinding_action_, trigger);
-        rebinding_action_.reset();
-    }
-
-    void MenuBar::captureMouseButton(const int button, const int mods) {
-        if (!rebinding_action_.has_value() || !input_bindings_) {
-            return;
-        }
-
-        if (waiting_for_double_click_) {
-            // Second click - check if it's the same button
-            if (button == pending_button_ && mods == pending_mods_) {
-                // This is a double-click!
-                const auto mouse_btn = static_cast<input::MouseButton>(button);
-                const input::MouseButtonTrigger trigger{mouse_btn, mods, true};
-                input_bindings_->setBinding(rebinding_mode_, *rebinding_action_, trigger);
-                rebinding_action_.reset();
-                waiting_for_double_click_ = false;
-                pending_button_ = -1;
-                return;
-            }
-            // Different button - commit the first click as single and start new wait
-        }
-
-        // First click - start waiting for potential second click
-        waiting_for_double_click_ = true;
-        pending_button_ = button;
-        pending_mods_ = mods;
-        first_click_time_ = std::chrono::steady_clock::now();
-    }
-
-    void MenuBar::updateCapture() {
-        if (!waiting_for_double_click_ || !rebinding_action_.has_value() || !input_bindings_) {
-            return;
-        }
-
-        // Check if we've waited long enough for a double-click
-        auto now = std::chrono::steady_clock::now();
-        double elapsed = std::chrono::duration<double>(now - first_click_time_).count();
-
-        if (elapsed >= DOUBLE_CLICK_WAIT_TIME) {
-            // Timeout - commit as single-click (drag) binding
-            const auto mouse_btn = static_cast<input::MouseButton>(pending_button_);
-            const input::MouseDragTrigger trigger{mouse_btn, pending_mods_};
-            input_bindings_->setBinding(rebinding_mode_, *rebinding_action_, trigger);
-            rebinding_action_.reset();
-            waiting_for_double_click_ = false;
-            pending_button_ = -1;
-        }
-    }
-
-    void MenuBar::cancelCapture() {
-        rebinding_action_.reset();
-        waiting_for_double_click_ = false;
-        pending_button_ = -1;
-    }
-
-    void MenuBar::renderInputSettingsWindow() {
-        if (!show_input_settings_) {
-            cancelCapture();
-            return;
-        }
-
-        // Check for double-click timeout each frame
-        updateCapture();
-
-        constexpr ImGuiWindowFlags WINDOW_FLAGS = ImGuiWindowFlags_NoDocking;
-        const float scale = getDpiScale();
-        ImGui::SetNextWindowSize(ImVec2(600 * scale, 600 * scale), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSizeConstraints(ImVec2(400 * scale, 300 * scale), ImVec2(FLT_MAX, FLT_MAX));
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * scale, 20.0f * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale, 10.0f * scale));
-        const auto& t = theme();
-        const bool is_light = t.isLightTheme();
-        const float frame_darken = t.frameDarkenAmount();
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(t.palette.surface, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Text, t.palette.text);
-        ImGui::PushStyleColor(ImGuiCol_TitleBg, t.palette.surface);
-        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.palette.surface_bright);
-        ImGui::PushStyleColor(ImGuiCol_Border, withAlpha(t.palette.info, 0.3f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, darken(t.palette.surface, frame_darken));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, is_light ? darken(t.palette.surface, 0.06f) : t.palette.surface_bright);
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, is_light ? darken(t.palette.surface, 0.08f) : lighten(t.palette.surface_bright, 0.05f));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, withAlpha(darken(t.palette.surface, frame_darken), 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Header, withAlpha(t.palette.info, 0.3f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, withAlpha(t.palette.info, 0.5f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, withAlpha(t.palette.info, 0.7f));
-        ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, is_light ? darken(t.palette.surface, 0.08f) : t.palette.surface_bright);
-        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, is_light ? darken(t.palette.surface, 0.15f) : lighten(t.palette.surface_bright, 0.15f));
-
-        if (ImGui::Begin(LOC(Window::INPUT_SETTINGS), &show_input_settings_, WINDOW_FLAGS)) {
-            if (fonts_.heading)
-                ImGui::PushFont(fonts_.heading);
-            ImGui::TextColored(t.palette.info, "INPUT SETTINGS");
-            if (fonts_.heading)
-                ImGui::PopFont();
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            if (input_bindings_) {
-                ImGui::Text("%s", LOC(InputSettings::ACTIVE_PROFILE));
-                ImGui::SameLine();
-
-                const auto profiles = input_bindings_->getAvailableProfiles();
-                const auto& current = input_bindings_->getCurrentProfileName();
-                const bool is_rebinding = rebinding_action_.has_value();
-
-                if (is_rebinding) {
-                    ImGui::BeginDisabled();
-                }
-
-                if (ImGui::BeginCombo("##profile", current.c_str())) {
-                    for (const auto& profile : profiles) {
-                        const bool is_selected = (profile == current);
-                        if (ImGui::Selectable(profile.c_str(), is_selected)) {
-                            input_bindings_->loadProfile(profile);
-                        }
-                        if (is_selected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-
-                if (is_rebinding) {
-                    ImGui::EndDisabled();
-                }
-
-                ImGui::Spacing();
-                ImGui::Spacing();
-
-                if (fonts_.section)
-                    ImGui::PushFont(fonts_.section);
-                ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::InputSettings::TOOL_MODE));
-                if (fonts_.section)
-                    ImGui::PopFont();
-                if (fonts_.small_font)
-                    ImGui::PushFont(fonts_.small_font);
-                ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::InputSettings::SELECT_TOOL_MODE));
-                if (fonts_.small_font)
-                    ImGui::PopFont();
-                ImGui::Spacing();
-
-                // Tool mode selector
-                static constexpr input::ToolMode TOOL_MODES[] = {
-                    input::ToolMode::GLOBAL,
-                    input::ToolMode::SELECTION,
-                    input::ToolMode::BRUSH,
-                    input::ToolMode::ALIGN,
-                    input::ToolMode::CROP_BOX,
-                };
-
-                if (is_rebinding) {
-                    ImGui::BeginDisabled();
-                }
-
-                if (ImGui::BeginCombo("##toolmode", getToolModeName(selected_tool_mode_))) {
-                    for (const auto mode : TOOL_MODES) {
-                        const bool is_selected = (mode == selected_tool_mode_);
-                        if (ImGui::Selectable(getToolModeName(mode), is_selected)) {
-                            selected_tool_mode_ = mode;
-                        }
-                        if (is_selected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-
-                if (is_rebinding) {
-                    ImGui::EndDisabled();
-                }
-
-                ImGui::Spacing();
-                ImGui::Spacing();
-
-                if (fonts_.section)
-                    ImGui::PushFont(fonts_.section);
-                ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::InputSettings::CURRENT_BINDINGS));
-                if (fonts_.section)
-                    ImGui::PopFont();
-                if (fonts_.small_font)
-                    ImGui::PushFont(fonts_.small_font);
-                if (selected_tool_mode_ == input::ToolMode::GLOBAL) {
-                    ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::InputSettings::GLOBAL_BINDINGS_HINT));
+            if (!plugin_status_message_.empty()) {
+                if (plugin_status_is_error_) {
+                    ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "%s", plugin_status_message_.c_str());
                 } else {
-                    ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::InputSettings::TOOL_BINDINGS_HINT));
+                    ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "%s", plugin_status_message_.c_str());
                 }
-                if (fonts_.small_font)
-                    ImGui::PopFont();
-                ImGui::Spacing();
-
-                constexpr ImGuiTableFlags TABLE_FLAGS = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY;
-                constexpr float FOOTER_HEIGHT = 150.0f; // Space for buttons below table
-                const float available_height = ImGui::GetContentRegionAvail().y - FOOTER_HEIGHT;
-                const float table_height = std::max(200.0f, available_height);
-
-                if (ImGui::BeginTable("bindings_table", 3, TABLE_FLAGS, ImVec2(0, table_height))) {
-                    ImGui::TableSetupColumn(LOC(lichtfeld::Strings::InputSettings::ACTION), ImGuiTableColumnFlags_WidthFixed, 180.0f);
-                    ImGui::TableSetupColumn(LOC(lichtfeld::Strings::InputSettings::BINDING), ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-                    ImGui::TableHeadersRow();
-
-                    const ImU32 section_bg = toU32(withAlpha(t.palette.info, is_light ? 0.15f : 0.2f));
-                    const ImVec4 section_text = is_light ? darken(t.palette.info, 0.1f) : lighten(t.palette.info, 0.2f);
-
-                    const auto renderSectionHeader = [section_bg, section_text](const char* title) {
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, section_bg);
-                        ImGui::TextColored(section_text, "%s", title);
-                        ImGui::TableNextColumn();
-                        ImGui::TableNextColumn();
-                    };
-
-                    const auto mode = selected_tool_mode_;
-
-                    // Navigation - always relevant for all tools
-                    renderSectionHeader(LOC(lichtfeld::Strings::InputSettings::SECTION_NAVIGATION));
-                    renderBindingRow(input::Action::CAMERA_ORBIT, mode);
-                    renderBindingRow(input::Action::CAMERA_PAN, mode);
-                    renderBindingRow(input::Action::CAMERA_ZOOM, mode);
-                    renderBindingRow(input::Action::CAMERA_SET_PIVOT, mode);
-                    renderBindingRow(input::Action::CAMERA_MOVE_FORWARD, mode);
-                    renderBindingRow(input::Action::CAMERA_MOVE_BACKWARD, mode);
-                    renderBindingRow(input::Action::CAMERA_MOVE_LEFT, mode);
-                    renderBindingRow(input::Action::CAMERA_MOVE_RIGHT, mode);
-                    renderBindingRow(input::Action::CAMERA_MOVE_UP, mode);
-                    renderBindingRow(input::Action::CAMERA_MOVE_DOWN, mode);
-                    renderBindingRow(input::Action::CAMERA_SPEED_UP, mode);
-                    renderBindingRow(input::Action::CAMERA_SPEED_DOWN, mode);
-                    renderBindingRow(input::Action::ZOOM_SPEED_UP, mode);
-                    renderBindingRow(input::Action::ZOOM_SPEED_DOWN, mode);
-
-                    if (mode == input::ToolMode::GLOBAL) {
-                        // These only make sense globally
-                        renderBindingRow(input::Action::CAMERA_RESET_HOME, mode);
-                        renderBindingRow(input::Action::CAMERA_NEXT_VIEW, mode);
-                        renderBindingRow(input::Action::CAMERA_PREV_VIEW, mode);
-                    }
-
-                    // Tool-specific actions
-                    if (mode == input::ToolMode::GLOBAL ||
-                        mode == input::ToolMode::SELECTION ||
-                        mode == input::ToolMode::BRUSH) {
-                        renderSectionHeader(LOC(lichtfeld::Strings::InputSettings::SECTION_SELECTION));
-                        renderBindingRow(input::Action::SELECTION_REPLACE, mode);
-                        renderBindingRow(input::Action::SELECTION_ADD, mode);
-                        renderBindingRow(input::Action::SELECTION_REMOVE, mode);
-
-                        if (mode == input::ToolMode::GLOBAL) {
-                            renderBindingRow(input::Action::SELECT_MODE_CENTERS, mode);
-                            renderBindingRow(input::Action::SELECT_MODE_RECTANGLE, mode);
-                            renderBindingRow(input::Action::SELECT_MODE_POLYGON, mode);
-                            renderBindingRow(input::Action::SELECT_MODE_LASSO, mode);
-                            renderBindingRow(input::Action::SELECT_MODE_RINGS, mode);
-                        }
-
-                        if (mode == input::ToolMode::GLOBAL || mode == input::ToolMode::SELECTION) {
-                            renderBindingRow(input::Action::TOGGLE_DEPTH_MODE, mode);
-                            renderBindingRow(input::Action::DEPTH_ADJUST_FAR, mode);
-                            renderBindingRow(input::Action::DEPTH_ADJUST_SIDE, mode);
-                        }
-                    }
-
-                    if (mode == input::ToolMode::BRUSH) {
-                        renderSectionHeader(LOC(lichtfeld::Strings::InputSettings::SECTION_BRUSH));
-                        renderBindingRow(input::Action::CYCLE_BRUSH_MODE, mode);
-                        renderBindingRow(input::Action::BRUSH_RESIZE, mode);
-                    }
-
-                    if (mode == input::ToolMode::CROP_BOX) {
-                        renderSectionHeader(LOC(lichtfeld::Strings::InputSettings::SECTION_CROP_BOX));
-                        renderBindingRow(input::Action::APPLY_CROP_BOX, mode);
-                    }
-
-                    // Editing - available in all modes
-                    renderSectionHeader(LOC(lichtfeld::Strings::InputSettings::SECTION_EDITING));
-                    // Delete action depends on mode: GLOBAL/transform = delete node, others = delete Gaussians
-                    if (mode == input::ToolMode::GLOBAL ||
-                        mode == input::ToolMode::TRANSLATE ||
-                        mode == input::ToolMode::ROTATE ||
-                        mode == input::ToolMode::SCALE) {
-                        renderBindingRow(input::Action::DELETE_NODE, mode);
-                    } else {
-                        renderBindingRow(input::Action::DELETE_SELECTED, mode);
-                    }
-                    renderBindingRow(input::Action::UNDO, mode);
-                    renderBindingRow(input::Action::REDO, mode);
-                    renderBindingRow(input::Action::COPY_SELECTION, mode);
-                    renderBindingRow(input::Action::PASTE_SELECTION, mode);
-                    renderBindingRow(input::Action::INVERT_SELECTION, mode);
-                    renderBindingRow(input::Action::DESELECT_ALL, mode);
-
-                    if (mode == input::ToolMode::GLOBAL) {
-                        renderSectionHeader(LOC(lichtfeld::Strings::InputSettings::SECTION_VIEW));
-                        renderBindingRow(input::Action::TOGGLE_SPLIT_VIEW, mode);
-                        renderBindingRow(input::Action::TOGGLE_GT_COMPARISON, mode);
-                        renderBindingRow(input::Action::CYCLE_PLY, mode);
-                        renderBindingRow(input::Action::CYCLE_SELECTION_VIS, mode);
-                    }
-
-                    ImGui::EndTable();
-                }
-            } else {
-                ImGui::TextColored(lighten(t.palette.error, 0.2f), "Input bindings not available");
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            if (input_bindings_) {
-                ImGui::PushStyleColor(ImGuiCol_Button, withAlpha(t.palette.success, 0.7f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, withAlpha(t.palette.success, 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.palette.success);
-                if (ImGui::Button(LOC(InputSettings::SAVE_CURRENT_PROFILE))) {
-                    input_bindings_->saveProfile(input_bindings_->getCurrentProfileName());
-                }
-                ImGui::PopStyleColor(3);
-
-                ImGui::SameLine();
-
-                ImGui::PushStyleColor(ImGuiCol_Button, withAlpha(t.palette.error, 0.7f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, withAlpha(t.palette.error, 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.palette.error);
-                if (ImGui::Button(LOC(InputSettings::RESET_TO_DEFAULT))) {
-                    const auto config_dir = input::InputBindings::getConfigDir();
-                    const auto saved_path = config_dir / "Default.json";
-                    if (std::filesystem::exists(saved_path)) {
-                        std::filesystem::remove(saved_path);
-                    }
-                    input_bindings_->loadProfile("Default");
-                    input_bindings_->saveProfile("Default");
-                }
-                ImGui::PopStyleColor(3);
-
-                ImGui::Spacing();
-
-                ImGui::PushStyleColor(ImGuiCol_Button, withAlpha(t.palette.secondary, 0.7f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, withAlpha(t.palette.secondary, 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.palette.secondary);
-                if (ImGui::Button(LOC(InputSettings::EXPORT))) {
-                    const auto path = SaveJsonFileDialog("input_bindings");
-                    if (!path.empty()) {
-                        input_bindings_->saveProfileToFile(path);
-                    }
-                }
-
-                ImGui::SameLine();
-
-                if (ImGui::Button(LOC(InputSettings::IMPORT))) {
-                    if (const auto path = OpenJsonFileDialog(); !path.empty() && std::filesystem::exists(path)) {
-                        input_bindings_->loadProfileFromFile(path);
-                    }
-                }
-                ImGui::PopStyleColor(3);
-
                 ImGui::Spacing();
             }
 
-            ImGui::TextColored(t.palette.text_dim, "Save to persist custom bindings");
-            ImGui::TextColored(t.palette.text_dim, "Tip: Double-click to bind double-click action");
-        }
-        ImGui::End();
+            if (widgets::ColoredButton("Install", widgets::ButtonStyle::Success, {100 * scale, 0})) {
+                if (!plugin_install_url_.empty()) {
+                    const PyGILState_STATE gil = PyGILState_Ensure();
 
-        ImGui::PopStyleColor(14);
-        ImGui::PopStyleVar(3);
-    }
+                    PyObject* const lf_mod = PyImport_ImportModule("lichtfeld");
+                    if (lf_mod) {
+                        PyObject* const plugins_mod = PyObject_GetAttrString(lf_mod, "plugins");
+                        if (plugins_mod) {
+                            PyObject* const result = PyObject_CallMethod(plugins_mod, "install", "s", plugin_install_url_.c_str());
+                            if (result) {
+                                const char* const name = PyUnicode_AsUTF8(result);
+                                plugin_status_message_ = std::string("Installed: ") + (name ? name : "");
+                                plugin_status_is_error_ = false;
+                                plugin_install_url_.clear();
+                                Py_DECREF(result);
+                            } else {
+                                PyObject *type, *value, *tb;
+                                PyErr_Fetch(&type, &value, &tb);
+                                if (value) {
+                                    PyObject* const str = PyObject_Str(value);
+                                    if (str) {
+                                        plugin_status_message_ = PyUnicode_AsUTF8(str);
+                                        Py_DECREF(str);
+                                    }
+                                    Py_XDECREF(type);
+                                    Py_XDECREF(value);
+                                    Py_XDECREF(tb);
+                                } else {
+                                    plugin_status_message_ = "Install failed";
+                                }
+                                plugin_status_is_error_ = true;
+                            }
+                            Py_DECREF(plugins_mod);
+                        }
+                        Py_DECREF(lf_mod);
+                    }
+                    PyErr_Clear();
 
-    void MenuBar::renderDebugWindow() {
-        if (!show_debug_window_)
-            return;
-
-        // Base dimensions (scaled by DPI factor)
-        const float scale = getDpiScale();
-        const float WINDOW_WIDTH = 450.0f * scale;
-        const float WINDOW_HEIGHT = 400.0f * scale;
-        constexpr ImGuiWindowFlags WINDOW_FLAGS = ImGuiWindowFlags_NoDocking |
-                                                  ImGuiWindowFlags_NoResize |
-                                                  ImGuiWindowFlags_NoScrollbar;
-        const auto& t = theme();
-
-        ImGui::SetNextWindowSize({WINDOW_WIDTH, WINDOW_HEIGHT}, ImGuiCond_Always);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * scale, 20.0f * scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale, 10.0f * scale));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(t.palette.surface, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Text, t.palette.text);
-        ImGui::PushStyleColor(ImGuiCol_TitleBg, t.palette.surface);
-        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.palette.surface_bright);
-        ImGui::PushStyleColor(ImGuiCol_Border, withAlpha(t.palette.info, 0.3f));
-
-        if (ImGui::Begin(LOC(Window::DEBUG_INFO), &show_debug_window_, WINDOW_FLAGS)) {
-            if (fonts_.heading)
-                ImGui::PushFont(fonts_.heading);
-            ImGui::TextColored(t.palette.info, "DEBUG INFORMATION");
-            if (fonts_.heading)
-                ImGui::PopFont();
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // GPU Memory Section
-            if (fonts_.section)
-                ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, "GPU MEMORY");
-            if (fonts_.section)
-                ImGui::PopFont();
-            ImGui::Spacing();
-
-            const auto mem = lfs::core::debug::get_memory_snapshot();
-            ImGui::Text("Used: %.2f GB / %.2f GB (%.1f%%)",
-                        mem.gpu_used_bytes / 1e9,
-                        mem.gpu_total_bytes / 1e9,
-                        mem.gpu_usage_percent());
-            ImGui::Text(LOC(DebugInfo::FREE_MEMORY), mem.gpu_free_bytes / 1e9);
-
-            // Progress bar for memory usage
-            const float usage_ratio = mem.gpu_total_bytes > 0
-                                          ? static_cast<float>(mem.gpu_used_bytes) / static_cast<float>(mem.gpu_total_bytes)
-                                          : 0.0f;
-            const ImVec4 bar_color = usage_ratio > 0.9f   ? t.palette.error
-                                     : usage_ratio > 0.7f ? t.palette.warning
-                                                          : t.palette.success;
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, bar_color);
-            ImGui::ProgressBar(usage_ratio, ImVec2(-1, 0));
-            ImGui::PopStyleColor();
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Tensor Operation Tracing Section
-            if (fonts_.section)
-                ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, "TENSOR OP TRACING");
-            if (fonts_.section)
-                ImGui::PopFont();
-            ImGui::Spacing();
-
-            auto& tracer = lfs::core::debug::TensorOpTracer::instance();
-            bool tracing_enabled = tracer.is_enabled();
-
-            if (ImGui::Checkbox(LOC(DebugInfo::ENABLE_TRACING), &tracing_enabled)) {
-                tracer.set_enabled(tracing_enabled);
+                    PyGILState_Release(gil);
+                }
             }
             ImGui::SameLine();
-            ImGui::TextColored(t.palette.text_dim, "(Performance impact)");
-
-            if (tracing_enabled) {
-                const auto& history = tracer.get_history();
-                ImGui::Text(LOC(DebugInfo::RECORDED_OPERATIONS), history.size());
-
-                if (ImGui::Button(LOC(DebugInfo::CLEAR_HISTORY))) {
-                    tracer.clear_history();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button(LOC(DebugInfo::PRINT_TO_LOG))) {
-                    tracer.print_history(50);
-                }
-
-                // Show last few operations
-                if (!history.empty()) {
-                    ImGui::Spacing();
-                    if (fonts_.small_font)
-                        ImGui::PushFont(fonts_.small_font);
-                    ImGui::TextColored(t.palette.text_dim, "Recent operations:");
-                    const size_t show_count = std::min(size_t{5}, history.size());
-                    for (size_t i = history.size() - show_count; i < history.size(); ++i) {
-                        const auto& op = history[i];
-                        std::string name_tag = op.tensor_name.empty() ? "" : std::format(" [{}]", op.tensor_name);
-                        std::string location = op.file.empty() ? "" : std::format(" @ {}:{}", op.file, op.line);
-                        ImGui::Text("  %s(%s) -> %s [%.2fms]%s%s",
-                                    op.op_name.c_str(),
-                                    op.input_shapes.c_str(),
-                                    op.output_shape.c_str(),
-                                    op.duration_ms,
-                                    name_tag.c_str(),
-                                    location.c_str());
-                    }
-                    if (fonts_.small_font)
-                        ImGui::PopFont();
-                }
+            if (widgets::ColoredButton("Cancel", widgets::ButtonStyle::Secondary, {100 * scale, 0})) {
+                show_plugin_install_popup_ = false;
             }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Build Info Section
-            if (fonts_.section)
-                ImGui::PushFont(fonts_.section);
-            ImGui::TextColored(t.palette.text_dim, "BUILD FLAGS");
-            if (fonts_.section)
-                ImGui::PopFont();
-            ImGui::Spacing();
-
-#ifdef TENSOR_VALIDATION_ENABLED
-            ImGui::TextColored(t.palette.success, "[x] Tensor Validation");
-#else
-            ImGui::TextColored(t.palette.text_dim, "[ ] Tensor Validation");
-#endif
-
-#ifdef CUDA_DEBUG_SYNC
-            ImGui::TextColored(t.palette.success, "[x] CUDA Debug Sync");
-#else
-            ImGui::TextColored(t.palette.text_dim, "[ ] CUDA Debug Sync");
-#endif
-
-#ifdef TENSOR_OP_TRACING
-            ImGui::TextColored(t.palette.success, "[x] Tensor Op Tracing (compile-time)");
-#else
-            ImGui::TextColored(t.palette.text_dim, "[ ] Tensor Op Tracing (compile-time)");
-#endif
-
-#ifdef DEBUG_BUILD
-            ImGui::TextColored(t.palette.success, "[x] Debug Build");
-#else
-            ImGui::TextColored(t.palette.text_dim, "[ ] Debug Build");
-#endif
-
-            ImGui::Spacing();
-            if (fonts_.small_font)
-                ImGui::PushFont(fonts_.small_font);
-            ImGui::TextColored(t.palette.text_dim, "Rebuild with -DENABLE_TENSOR_VALIDATION=ON");
-            ImGui::TextColored(t.palette.text_dim, "or -DENABLE_CUDA_DEBUG_SYNC=ON to enable");
-            if (fonts_.small_font)
-                ImGui::PopFont();
         }
         ImGui::End();
 
-        ImGui::PopStyleColor(5);
-        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+#endif
     }
 
 } // namespace lfs::vis::gui

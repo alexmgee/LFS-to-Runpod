@@ -64,6 +64,13 @@ option(ENABLE_CUDA_GL_INTEROP "Enable CUDA-OpenGL interoperability" ON)
 option(BUILD_TESTS "Build tests" OFF)
 option(BUILD_UNICODE_TEST_ONLY "Build only Unicode path test (no CUDA)" OFF)
 option(ENABLE_ALLOCATION_PROFILING "Enable tensor allocation profiling" OFF)
+option(BUILD_PYTHON_BINDINGS "Build Python bindings (nanobind)" OFF)
+
+# Enable position-independent code globally when building Python bindings
+# This is required for all static libraries that will be linked into the shared module
+if(BUILD_PYTHON_BINDINGS)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 
 # Debug options
 option(ENABLE_TENSOR_VALIDATION "Enable runtime tensor NaN/Inf validation" OFF)
@@ -187,7 +194,7 @@ enable_language(CUDA)
 find_package(CUDAToolkit 12.8 REQUIRED)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr")
 if(WIN32)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --diag-suppress 221 -Xcompiler=/wd4267")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --diag-suppress 221,1394,1388 -Xcompiler=/wd4267")
 endif()
 
 # Create nvToolsExt target BEFORE finding Torch (PyTorch expects this)
@@ -295,9 +302,22 @@ configure_file(
 # Project-wide definitions
 add_definitions(-DPROJECT_ROOT_PATH="${PROJ_ROOT_DIR}")
 
+# CUDA device debugging (-G flag) generates huge object files. Disable in CI.
+option(CUDA_DEVICE_DEBUG "Enable CUDA device debugging (-G flag)" ON)
+
+if(CUDA_DEVICE_DEBUG)
+    set(LFS_CUDA_DEVICE_DEBUG_FLAGS "-G" CACHE INTERNAL "")
+else()
+    set(LFS_CUDA_DEVICE_DEBUG_FLAGS "" CACHE INTERNAL "")
+endif()
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
-    set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -g -G -O0")
+    if(CUDA_DEVICE_DEBUG)
+        set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -g -G -O0")
+    else()
+        set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -g -O0")
+    endif()
 endif()
 
 # External dependencies (EXCLUDE_FROM_ALL to handle install ourselves)
@@ -306,12 +326,17 @@ add_subdirectory(external EXCLUDE_FROM_ALL)
 # =============================================================================
 # LIBRARY MODULES
 # =============================================================================
-add_subdirectory(src/core)      # Core module (lfs::core namespace)
-add_subdirectory(src/training)  # Training module (lfs::training namespace)
-add_subdirectory(src/io)        # I/O module (lfs::io namespace)
-add_subdirectory(src/rendering) # Rendering module (lfs::rendering namespace)
+add_subdirectory(src/core)       # Core module (lfs::core namespace)
+add_subdirectory(src/training)   # Training module (lfs::training namespace)
+add_subdirectory(src/io)         # I/O module (lfs::io namespace)
+add_subdirectory(src/rendering)  # Rendering module (lfs::rendering namespace)
+add_subdirectory(src/sequencer)  # Sequencer module (lfs::sequencer namespace)
 add_subdirectory(src/visualizer) # Visualizer module (lfs::vis namespace)
-add_subdirectory(src/geometry)  # Geometry utilities
+add_subdirectory(src/geometry)   # Geometry utilities
+add_subdirectory(src/mcp)        # MCP server (AI agent integration)
+if(BUILD_PYTHON_BINDINGS)
+    add_subdirectory(src/python)
+endif()
 
 # =============================================================================
 # MAIN EXECUTABLES
@@ -320,12 +345,15 @@ add_subdirectory(src/geometry)  # Geometry utilities
 # -----------------------------------------------------------------------------
 # LichtFeld-Studio
 # -----------------------------------------------------------------------------
+
 add_executable(${PROJECT_NAME}
     src/app/main.cpp
     src/app/application.cpp
+    src/app/converter.cpp
     src/app/splash_screen.cpp
     resources/lichtfeld-studio.rc
 )
+
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
         CUDA_ARCHITECTURES "${LichtFeld-Studio_CUDA_ARCH}"
@@ -353,7 +381,9 @@ target_link_libraries(${PROJECT_NAME}
         lfs_geometry       # For EuclideanTransform
         lfs_core           # Core library
         lfs_io             # For CacheLoader
+        lfs_mcp            # MCP server for AI agent integration
         fastlfs_backend    # Rasterizer and optimizer
+        $<$<BOOL:${BUILD_PYTHON_BINDINGS}>:lfs_python_utils>  # Python integration
 
         ${OPENGL_LIBRARIES}
         CUDA::cudart
@@ -391,6 +421,45 @@ if(TARGET nvimgcodec)
     endif()
 
     message(STATUS "Post-build: nvImageCodec libraries will be copied to executable directory")
+endif()
+
+# Copy Python DLLs for Windows runtime (Python is embedded in the application)
+if(WIN32 AND BUILD_PYTHON_BINDINGS)
+    get_filename_component(VCPKG_PYTHON_DIR "${Python_EXECUTABLE}" DIRECTORY)
+
+    # Glob python*.dll - check both tools/python3/ and parent bin/ (vcpkg layout varies)
+    file(GLOB PYTHON_RUNTIME_DLLS
+        "${VCPKG_PYTHON_DIR}/python*.dll"
+        "${VCPKG_PYTHON_DIR}/../bin/python*.dll"
+    )
+    if(PYTHON_RUNTIME_DLLS)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${PYTHON_RUNTIME_DLLS}
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMENT "Copying Python DLLs to executable directory"
+        )
+        message(STATUS "Post-build: Python DLLs will be copied: ${PYTHON_RUNTIME_DLLS}")
+    endif()
+endif()
+
+# Copy CUDA runtime DLLs for Windows (needed for Python module loading)
+if(WIN32 AND CUDAToolkit_FOUND)
+    set(CUDA_RUNTIME_DLLS
+        "${CUDAToolkit_BIN_DIR}/cudart64_12.dll"
+        "${CUDAToolkit_BIN_DIR}/curand64_10.dll"
+    )
+    foreach(CUDA_DLL ${CUDA_RUNTIME_DLLS})
+        if(EXISTS "${CUDA_DLL}")
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CUDA_DLL}"
+                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+                COMMENT "Copying ${CUDA_DLL} to executable directory"
+            )
+        endif()
+    endforeach()
+    message(STATUS "Post-build: CUDA DLLs will be copied from ${CUDAToolkit_BIN_DIR}")
 endif()
 
 # Before extension post-build copying: remove stale 'extensions' file if present (prevent mkdir failure)
@@ -524,16 +593,29 @@ message(STATUS "Post-build: Resources will be copied to \${BUILD_DIR}/resources/
 if(UNIX)
     target_link_libraries(${PROJECT_NAME} PRIVATE GL GLU)
 
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-            INSTALL_RPATH "$ORIGIN:$ORIGIN/lib:${CUDAToolkit_LIBRARY_DIR}"
-            BUILD_WITH_INSTALL_RPATH TRUE
-            INSTALL_RPATH_USE_LINK_PATH TRUE
-    )
+    if(BUILD_PORTABLE)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+                INSTALL_RPATH "$ORIGIN:$ORIGIN/lib"
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH_USE_LINK_PATH FALSE
+        )
+    else()
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+                INSTALL_RPATH "$ORIGIN:$ORIGIN/lib:${CUDAToolkit_LIBRARY_DIR}"
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH_USE_LINK_PATH TRUE
+        )
+    endif()
 
 elseif(WIN32)
     # On Windows, DLLs in the same directory as the .exe are automatically found
+    # For multi-config generators (MSVC), set all configs to same directory
     set_target_properties(${PROJECT_NAME} PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
     )
 endif()
 
@@ -580,7 +662,6 @@ endfunction()
 configure_build_type(fastlfs_backend)
 configure_build_type(lfs_core)
 configure_build_type(lfs_core_cuda)
-configure_build_type(lfs_tensor)
 configure_build_type(lfs_training)
 configure_build_type(lfs_rendering)
 configure_build_type(lfs_visualizer)
@@ -641,6 +722,18 @@ include(GNUInstallDirs)
 include(InstallRequiredSystemLibraries)
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS lfs_core
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(TARGETS lfs_logger
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(TARGETS lfs_event_bridge
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
 install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" DESTINATION ".")
 
 set(INSTALL_RESOURCE_DIR "${CMAKE_INSTALL_DATADIR}/LichtFeld-Studio")
@@ -657,13 +750,35 @@ install(FILES "${CMAKE_SOURCE_DIR}/src/visualizer/gui/assets/lichtfeld-splash-lo
 install(FILES "${CMAKE_SOURCE_DIR}/src/visualizer/gui/assets/core11-logo.png" DESTINATION "${INSTALL_RESOURCE_DIR}/assets")
 install(FILES "${CMAKE_SOURCE_DIR}/src/visualizer/gui/assets/core11-logo-dark.png" DESTINATION "${INSTALL_RESOURCE_DIR}/assets")
 
+# Plugin development documentation
+if(BUILD_PYTHON_BINDINGS)
+    set(DOC_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/doc/LichtFeld-Studio")
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/docs/PYTHON_API.md"
+        "${CMAKE_SOURCE_DIR}/docs/plugin-system.md"
+        "${CMAKE_SOURCE_DIR}/docs/plugin-use-cases.md"
+        "${CMAKE_SOURCE_DIR}/docs/plugin-dev-workflow.md"
+        DESTINATION "${DOC_INSTALL_DIR}"
+        OPTIONAL
+    )
+endif()
+
 if(TARGET nvimgcodec)
-    install(TARGETS nvimgcodec LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(TARGETS nvimgcodec
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
     if(TARGET nvjpeg_ext)
-        install(TARGETS nvjpeg_ext LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/extensions")
+        install(TARGETS nvjpeg_ext
+            LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/extensions"
+            RUNTIME DESTINATION "extensions"
+        )
     endif()
     if(TARGET nvjpeg2k_ext)
-        install(TARGETS nvjpeg2k_ext LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/extensions")
+        install(TARGETS nvjpeg2k_ext
+            LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/extensions"
+            RUNTIME DESTINATION "extensions"
+        )
     endif()
 endif()
 

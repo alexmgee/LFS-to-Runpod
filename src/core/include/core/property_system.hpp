@@ -1,0 +1,154 @@
+/* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later */
+
+#pragma once
+
+#include <any>
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+#include <variant>
+#include <vector>
+
+namespace lfs::core::prop {
+
+    enum class PropSource : uint8_t { CPP,
+                                      PYTHON };
+
+    struct PropertyObjectRef {
+        void* ptr = nullptr;
+        PropSource source = PropSource::CPP;
+
+        static PropertyObjectRef cpp(void* p) { return {p, PropSource::CPP}; }
+        static PropertyObjectRef python(void* p) { return {p, PropSource::PYTHON}; }
+
+        [[nodiscard]] bool is_cpp() const { return source == PropSource::CPP; }
+        [[nodiscard]] bool is_python() const { return source == PropSource::PYTHON; }
+    };
+
+    enum class PropType {
+        Bool,
+        Int,
+        Float,
+        String,
+        Enum,
+        SizeT,
+        // Geometric types for animation
+        Vec2,
+        Vec3,
+        Vec4,
+        Quat,
+        Mat4,
+        Color3,
+        Color4,
+        // GPU tensor type
+        Tensor
+    };
+
+    enum class PropUIHint { Default,
+                            Slider,
+                            Drag,
+                            Input,
+                            Checkbox,
+                            Combo,
+                            Hidden };
+
+    enum PropFlags : uint32_t {
+        PROP_NONE = 0,
+        PROP_READONLY = 1 << 0,
+        PROP_LIVE_UPDATE = 1 << 1,
+        PROP_NEEDS_RESTART = 1 << 2,
+        PROP_ANIMATABLE = 1 << 3,
+    };
+
+    inline PropFlags operator|(PropFlags a, PropFlags b) {
+        return static_cast<PropFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    }
+
+    inline PropFlags operator&(PropFlags a, PropFlags b) {
+        return static_cast<PropFlags>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+    }
+
+    struct EnumItem {
+        std::string name;
+        std::string identifier;
+        int value;
+    };
+
+    struct PropertyMeta {
+        std::string id;
+        std::string name;
+        std::string description;
+        std::string group;
+        PropType type = PropType::Float;
+        PropUIHint ui_hint = PropUIHint::Default;
+        uint32_t flags = PROP_NONE;
+        PropSource source = PropSource::CPP;
+
+        double min_value = 0.0;
+        double max_value = 1.0;
+        double soft_min = 0.0;
+        double soft_max = 1.0;
+        double step = 1.0;
+        double default_value = 0.0;
+        std::string default_string;
+        std::vector<EnumItem> enum_items;
+        int default_enum = 0;
+
+        // Geometric type defaults
+        std::array<double, 2> default_vec2{};
+        std::array<double, 3> default_vec3{};
+        std::array<double, 4> default_vec4{};
+        std::array<double, 4> default_quat{1.0, 0.0, 0.0, 0.0};                              // w, x, y, z
+        std::array<double, 16> default_mat4{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; // identity
+
+        std::function<std::any(const PropertyObjectRef&)> getter;
+        std::function<void(PropertyObjectRef&, const std::any&)> setter;
+
+        // AnimatableProperty bridge for Python descriptor support
+        std::function<void*(const PropertyObjectRef&)> get_animatable_ptr;
+        bool supports_descriptor = false;
+
+        bool is_collection = false;
+        std::string collection_item_type;
+        std::function<size_t(const PropertyObjectRef&)> collection_size;
+        std::function<PropertyObjectRef(const PropertyObjectRef&, size_t)> collection_get;
+
+        std::function<void(const PropertyObjectRef&, const std::any&, const std::any&)> on_update;
+
+        [[nodiscard]] bool has_flag(PropFlags f) const { return (flags & f) != PROP_NONE; }
+        [[nodiscard]] bool is_readonly() const { return has_flag(PROP_READONLY); }
+        [[nodiscard]] bool is_live_update() const { return has_flag(PROP_LIVE_UPDATE); }
+        [[nodiscard]] bool needs_restart() const { return has_flag(PROP_NEEDS_RESTART); }
+        [[nodiscard]] bool is_animatable() const { return has_flag(PROP_ANIMATABLE); }
+
+        [[nodiscard]] bool is_geometric_type() const {
+            return type == PropType::Vec2 || type == PropType::Vec3 || type == PropType::Vec4 ||
+                   type == PropType::Quat || type == PropType::Mat4 ||
+                   type == PropType::Color3 || type == PropType::Color4;
+        }
+    };
+
+    struct PropertyGroup {
+        std::string id;
+        std::string name;
+        std::vector<PropertyMeta> properties;
+
+        [[nodiscard]] const PropertyMeta* find(const std::string& prop_id) const {
+            for (const auto& p : properties) {
+                if (p.id == prop_id)
+                    return &p;
+            }
+            return nullptr;
+        }
+    };
+
+    using PropertyCallback = std::function<void(const std::string& group_id,
+                                                const std::string& prop_id,
+                                                const std::any& old_value,
+                                                const std::any& new_value)>;
+
+} // namespace lfs::core::prop

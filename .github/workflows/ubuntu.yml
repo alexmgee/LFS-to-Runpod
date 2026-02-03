@@ -32,14 +32,35 @@ jobs:
       CMAKE_MAKE_PROGRAM: /usr/bin/ninja
 
     steps:
+      - name: Install Git
+        run: |
+          apt-get update
+          apt-get install -y git
+
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Free disk space
         run: |
           apt-get clean
           rm -rf /var/lib/apt/lists/*
-          rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          # Host paths (may not exist in container)
+          rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache /usr/local/lib/android /opt/az
+          # CUDA extras - samples, docs, tools we don't need
+          rm -rf /usr/local/cuda/nsight* /usr/local/cuda/compute-sanitizer
+          rm -rf /usr/local/cuda/extras /usr/local/cuda/tools
+          rm -rf /usr/local/cuda/doc
+          # Remove large static libs but keep ones needed for build
+          find /usr/local/cuda/targets/x86_64-linux/lib -name '*.a' \
+            ! -name 'libcudart_static.a' \
+            ! -name 'libcudadevrt.a' \
+            ! -name 'libnvjpeg_static.a' \
+            ! -name 'libnvjpeg2k_static.a' \
+            ! -name 'libculibos.a' \
+            -delete 2>/dev/null || true
+          df -h
 
       - name: Install build dependencies
         run: |
@@ -53,7 +74,8 @@ jobs:
           apt-get install -y kitware-archive-keyring
 
           apt-get install -y git curl unzip cmake gcc-14 g++-14 ccache ninja-build \
-            zip tar pkg-config python3 python3-dev libxinerama-dev libxcursor-dev xorg-dev libglu1-mesa-dev
+            zip tar pkg-config python3 python3-dev libxinerama-dev libxcursor-dev xorg-dev libglu1-mesa-dev \
+            nasm autoconf autoconf-archive automake libtool
 
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
                               --slave /usr/bin/g++ g++ /usr/bin/g++-14
@@ -87,7 +109,15 @@ jobs:
         run: |
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+            -DBUILD_PYTHON_BINDINGS=ON \
+            -DBUILD_PYTHON_STUBS=OFF \
+            -DCUDA_DEVICE_DEBUG=OFF
+
+      - name: Clean vcpkg buildtrees
+        run: |
+          rm -rf build/vcpkg_installed/vcpkg/blds
+          df -h
 
       - name: Build
-        run: cmake --build build -j 2
+        run: cmake --build build -j $(nproc)

@@ -116,6 +116,23 @@ namespace lfs::io {
             void* cuda_stream = nullptr);
 
         /**
+         * @brief Batch encode raw RGB uint8 GPU data to JPEG bytes
+         *
+         * @param gpu_ptrs Vector of GPU device pointers to RGB24 data (HWC, uint8)
+         * @param width Image width (all images must have same dimensions)
+         * @param height Image height
+         * @param quality JPEG quality (1-100)
+         * @param cuda_stream Optional CUDA stream for async operations
+         * @return Vector of JPEG byte vectors
+         */
+        std::vector<std::vector<uint8_t>> encode_batch_rgb_to_jpeg(
+            const std::vector<void*>& gpu_ptrs,
+            int width,
+            int height,
+            int quality = 95,
+            void* cuda_stream = nullptr);
+
+        /**
          * @brief Check if nvImageCodec is available and working
          */
         static bool is_available();
