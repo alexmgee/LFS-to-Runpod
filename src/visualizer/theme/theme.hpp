@@ -202,7 +202,7 @@ namespace lfs::vis {
         void pushContextMenuStyle() const;
         static void popContextMenuStyle();
 
-        // Modal dialog helpers (pushes 5 colors, 2 style vars)
+        // Modal dialog helpers (pushes 5 colors, 3 style vars)
         void pushModalStyle() const;
         static void popModalStyle();
 
@@ -218,6 +218,10 @@ namespace lfs::vis {
             return isLightTheme() ? LIGHT_DARKEN : DARK_DARKEN;
         }
     };
+
+    // DPI scale for theme sizing
+    void setThemeDpiScale(float scale);
+    [[nodiscard]] float getThemeDpiScale();
 
     // Global access
     [[nodiscard]] const Theme& theme();

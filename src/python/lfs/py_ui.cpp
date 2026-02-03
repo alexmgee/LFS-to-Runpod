@@ -1891,7 +1891,7 @@ namespace lfs::python {
         constexpr float WINDOW_BG_ALPHA = 0.98f;
 
         const auto& t = lfs::vis::theme();
-        const float scale = ImGui::GetIO().FontGlobalScale;
+        const float scale = python::get_shared_dpi_scale();
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, WINDOW_ROUNDING * scale);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(WINDOW_PADDING * scale, WINDOW_PADDING * scale));
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(t.palette.surface.x, t.palette.surface.y,

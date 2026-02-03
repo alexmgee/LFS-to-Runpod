@@ -327,6 +327,7 @@ namespace lfs::vis::gui {
 
         // Store DPI scale for use by UI components
         lfs::python::set_shared_dpi_scale(xscale);
+        lfs::vis::setThemeDpiScale(xscale);
 
         // Set application icon - use the resource path helper
         try {

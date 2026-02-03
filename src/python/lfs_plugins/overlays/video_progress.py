@@ -65,8 +65,10 @@ class VideoProgressOverlay(Panel):
         layout.set_next_window_pos((overlay_x, overlay_y))
         layout.set_next_window_size((overlay_width, 0))
 
-        layout.push_style_color("WindowBg", (0.1, 0.1, 0.1, 0.95))
-        layout.push_style_var("WindowRounding", 8.0 * scale)
+        theme = lf.ui.theme()
+        surface = theme.palette.surface
+        layout.push_style_color("WindowBg", (surface[0], surface[1], surface[2], 0.95))
+        layout.push_style_var("WindowRounding", theme.sizes.popup_rounding * scale)
         layout.push_style_var_vec2("WindowPadding", (20 * scale, 15 * scale))
 
         if layout.begin_window("##VideoExportProgressWin", DIALOG_FLAGS):

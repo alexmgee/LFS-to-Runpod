@@ -35,6 +35,7 @@ namespace lfs::vis {
         Theme g_current_theme;
         Theme g_dark_theme;
         Theme g_light_theme;
+        float g_dpi_scale = 1.0f;
         bool g_initialized = false;
         bool g_themes_loaded = false;
 
@@ -178,9 +179,10 @@ namespace lfs::vis {
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, withAlpha(palette.primary, context_menu.header_hover_alpha));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, withAlpha(palette.primary, context_menu.header_active_alpha));
         ImGui::PushStyleColor(ImGuiCol_Text, palette.text);
-        ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, context_menu.rounding);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, context_menu.padding);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, context_menu.item_spacing);
+        const float dpi = g_dpi_scale;
+        ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, context_menu.rounding * dpi);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(context_menu.padding.x * dpi, context_menu.padding.y * dpi));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(context_menu.item_spacing.x * dpi, context_menu.item_spacing.y * dpi));
     }
 
     void Theme::popContextMenuStyle() {
@@ -191,6 +193,8 @@ namespace lfs::vis {
     void Theme::pushModalStyle() const {
         constexpr float MODAL_BG_ALPHA = 0.98f;
         constexpr float MODAL_BORDER_SIZE = 2.0f;
+        constexpr float MODAL_PADDING_X = 20.0f;
+        constexpr float MODAL_PADDING_Y = 15.0f;
         constexpr float TITLE_DARKEN = 0.1f;
         constexpr float TITLE_ACTIVE_DARKEN = 0.05f;
 
@@ -203,14 +207,19 @@ namespace lfs::vis {
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, title_bg_active);
         ImGui::PushStyleColor(ImGuiCol_Border, palette.primary);
         ImGui::PushStyleColor(ImGuiCol_Text, palette.text);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, MODAL_BORDER_SIZE);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sizes.popup_rounding);
+        const float dpi = g_dpi_scale;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, MODAL_BORDER_SIZE * dpi);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, sizes.popup_rounding * dpi);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(MODAL_PADDING_X * dpi, MODAL_PADDING_Y * dpi));
     }
 
     void Theme::popModalStyle() {
-        ImGui::PopStyleVar(2);
+        ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(5);
     }
+
+    void setThemeDpiScale(const float scale) { g_dpi_scale = scale; }
+    float getThemeDpiScale() { return g_dpi_scale; }
 
     // Global access
     const Theme& theme() {
@@ -307,6 +316,8 @@ namespace lfs::vis {
         colors[ImGuiCol_ModalWindowDimBg] = withAlpha(p.background, 0.35f);
 
         style.FrameBorderSize = is_light ? 1.0f : 0.0f;
+
+        style.ScaleAllSizes(g_dpi_scale);
     }
 
     namespace {

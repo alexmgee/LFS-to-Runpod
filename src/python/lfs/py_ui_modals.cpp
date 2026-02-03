@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "core/logger.hpp"
+#include "gui/ui_widgets.hpp"
 #include "py_ui.hpp"
 #include "theme/theme.hpp"
 
@@ -10,6 +11,42 @@
 #include <imgui.h>
 
 namespace lfs::python {
+
+    using lfs::vis::gui::widgets::ButtonStyle;
+    using lfs::vis::gui::widgets::ColoredButton;
+
+    static void draw_text_centered(const std::string& text) {
+        const float region_width = ImGui::GetContentRegionAvail().x;
+        const char* p = text.c_str();
+        const char* end = p + text.size();
+        while (p < end) {
+            const char* nl = static_cast<const char*>(std::memchr(p, '\n', end - p));
+            if (!nl)
+                nl = end;
+            if (nl == p) {
+                ImGui::Spacing();
+            } else {
+                const float w = ImGui::CalcTextSize(p, nl).x;
+                if (w <= region_width) {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (region_width - w) * 0.5f);
+                    ImGui::TextUnformatted(p, nl);
+                } else {
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + region_width);
+                    ImGui::TextUnformatted(p, nl);
+                    ImGui::PopTextWrapPos();
+                }
+            }
+            p = nl + 1;
+        }
+    }
+
+    static constexpr float BUTTON_WIDTH = 100.0f;
+    static constexpr float POPUP_WIDTH = 440.0f;
+
+    static constexpr ImGuiWindowFlags MODAL_FLAGS = ImGuiWindowFlags_NoCollapse |
+                                                    ImGuiWindowFlags_NoDocking |
+                                                    ImGuiWindowFlags_NoResize |
+                                                    ImGuiWindowFlags_NoSavedSettings;
 
     PyModalRegistry& PyModalRegistry::instance() {
         static PyModalRegistry registry;
@@ -27,6 +64,7 @@ namespace lfs::python {
         modal.callback = callback;
         modal.type = ModalDialogType::Confirm;
         modal.is_open = true;
+        modal.needs_open = true;
         modals_.push_back(std::move(modal));
     }
 
@@ -42,6 +80,7 @@ namespace lfs::python {
         modal.type = ModalDialogType::Input;
         modal.input_value = default_value;
         modal.is_open = true;
+        modal.needs_open = true;
         modals_.push_back(std::move(modal));
     }
 
@@ -57,6 +96,7 @@ namespace lfs::python {
         modal.type = ModalDialogType::Message;
         modal.style = style;
         modal.is_open = true;
+        modal.needs_open = true;
         modals_.push_back(std::move(modal));
     }
 
@@ -65,17 +105,36 @@ namespace lfs::python {
         return !modals_.empty();
     }
 
-    void PyModalRegistry::draw_confirm_dialog(PyModalDialog& modal) {
-        ImGui::TextWrapped("%s", modal.message.c_str());
+    void PyModalRegistry::draw_confirm_dialog(PyModalDialog& modal, const float scale) {
+        const float btn_w = BUTTON_WIDTH * scale;
+
+        draw_text_centered(modal.message);
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
         std::string clicked_button;
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            clicked_button = modal.buttons.back();
+            modal.is_open = false;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            clicked_button = modal.buttons.front();
+            modal.is_open = false;
+        }
+
+        const auto& im_style = ImGui::GetStyle();
+        const float total_btns_width =
+            btn_w * static_cast<float>(modal.buttons.size()) +
+            im_style.ItemSpacing.x * static_cast<float>(modal.buttons.size() - 1);
+        ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - total_btns_width +
+                             im_style.WindowPadding.x);
+
         for (size_t i = 0; i < modal.buttons.size(); ++i) {
             if (i > 0)
                 ImGui::SameLine();
-            if (ImGui::Button(modal.buttons[i].c_str(), ImVec2(80, 0))) {
+            const auto btn_style = (i == 0) ? ButtonStyle::Primary : ButtonStyle::Secondary;
+            if (ColoredButton(modal.buttons[i].c_str(), btn_style, ImVec2(btn_w, 0))) {
                 clicked_button = modal.buttons[i];
                 modal.is_open = false;
             }
@@ -91,8 +150,10 @@ namespace lfs::python {
         }
     }
 
-    void PyModalRegistry::draw_input_dialog(PyModalDialog& modal) {
-        ImGui::TextWrapped("%s", modal.message.c_str());
+    void PyModalRegistry::draw_input_dialog(PyModalDialog& modal, const float scale) {
+        const float btn_w = BUTTON_WIDTH * scale;
+
+        draw_text_centered(modal.message);
         ImGui::Spacing();
 
         static char input_buf[1024];
@@ -111,12 +172,25 @@ namespace lfs::python {
         bool submitted = false;
         bool cancelled = false;
 
-        if (ImGui::Button("OK", ImVec2(80, 0))) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            cancelled = true;
+            modal.is_open = false;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            submitted = true;
+            modal.is_open = false;
+        }
+
+        const auto& im_style = ImGui::GetStyle();
+        const float total_btns_width = btn_w * 2.0f + im_style.ItemSpacing.x;
+        ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - total_btns_width +
+                             im_style.WindowPadding.x);
+
+        if (ColoredButton("OK", ButtonStyle::Primary, ImVec2(btn_w, 0))) {
             submitted = true;
             modal.is_open = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+        if (ColoredButton("Cancel", ButtonStyle::Secondary, ImVec2(btn_w, 0))) {
             cancelled = true;
             modal.is_open = false;
         }
@@ -135,13 +209,23 @@ namespace lfs::python {
         }
     }
 
-    void PyModalRegistry::draw_message_dialog(PyModalDialog& modal) {
-        ImGui::TextWrapped("%s", modal.message.c_str());
+    void PyModalRegistry::draw_message_dialog(PyModalDialog& modal, const float scale) {
+        const float btn_w = BUTTON_WIDTH * scale;
+
+        draw_text_centered(modal.message);
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (ImGui::Button("OK", ImVec2(80, 0))) {
+        bool close = ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Enter);
+
+        ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - btn_w) * 0.5f +
+                             ImGui::GetStyle().WindowPadding.x);
+
+        if (ColoredButton("OK", ButtonStyle::Primary, ImVec2(btn_w, 0)))
+            close = true;
+
+        if (close) {
             modal.is_open = false;
             if (modal.callback.is_valid() && !modal.callback.is_none()) {
                 nb::gil_scoped_acquire gil;
@@ -157,6 +241,9 @@ namespace lfs::python {
     void PyModalRegistry::draw_modals() {
         std::lock_guard lock(mutex_);
 
+        const auto& t = lfs::vis::theme();
+        const float scale = get_shared_dpi_scale();
+
         for (auto it = modals_.begin(); it != modals_.end();) {
             auto& modal = *it;
 
@@ -165,49 +252,47 @@ namespace lfs::python {
                 continue;
             }
 
-            // Apply style-based border color
-            const auto& t = lfs::vis::theme();
-            ImVec4 border_color;
-            switch (modal.style) {
-            case MessageStyle::Warning:
-                border_color = t.palette.warning;
-                break;
-            case MessageStyle::Error:
-                border_color = t.palette.error;
-                break;
-            default:
-                border_color = t.palette.success;
-                break;
+            const ImVec4 border_color = [&]() -> ImVec4 {
+                switch (modal.style) {
+                case MessageStyle::Warning: return t.palette.warning;
+                case MessageStyle::Error: return t.palette.error;
+                default: return t.palette.success;
+                }
+            }();
+
+            if (modal.needs_open) {
+                ImGui::OpenPopup(modal.title.c_str());
+                modal.needs_open = false;
             }
 
-            ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(POPUP_WIDTH * scale, 0), ImGuiCond_Always);
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing,
                                     ImVec2(0.5f, 0.5f));
 
-            constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize |
-                                               ImGuiWindowFlags_NoCollapse |
-                                               ImGuiWindowFlags_NoDocking;
-
+            t.pushModalStyle();
             ImGui::PushStyleColor(ImGuiCol_Border, border_color);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
 
-            if (ImGui::Begin(modal.title.c_str(), &modal.is_open, flags)) {
+            if (ImGui::BeginPopupModal(modal.title.c_str(), nullptr, MODAL_FLAGS)) {
                 switch (modal.type) {
                 case ModalDialogType::Confirm:
-                    draw_confirm_dialog(modal);
+                    draw_confirm_dialog(modal, scale);
                     break;
                 case ModalDialogType::Input:
-                    draw_input_dialog(modal);
+                    draw_input_dialog(modal, scale);
                     break;
                 case ModalDialogType::Message:
-                    draw_message_dialog(modal);
+                    draw_message_dialog(modal, scale);
                     break;
                 }
-            }
-            ImGui::End();
 
-            ImGui::PopStyleVar();
+                if (!modal.is_open)
+                    ImGui::CloseCurrentPopup();
+
+                ImGui::EndPopup();
+            }
+
             ImGui::PopStyleColor();
+            lfs::vis::Theme::popModalStyle();
 
             if (!modal.is_open) {
                 it = modals_.erase(it);

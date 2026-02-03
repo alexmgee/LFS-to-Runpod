@@ -773,6 +773,7 @@ namespace lfs::python {
         MessageStyle style = MessageStyle::Info;
         std::string input_value;
         bool is_open = true;
+        bool needs_open = true;
     };
 
     // Singleton registry for modal dialogs
@@ -801,9 +802,9 @@ namespace lfs::python {
         PyModalRegistry(const PyModalRegistry&) = delete;
         PyModalRegistry& operator=(const PyModalRegistry&) = delete;
 
-        void draw_confirm_dialog(PyModalDialog& modal);
-        void draw_input_dialog(PyModalDialog& modal);
-        void draw_message_dialog(PyModalDialog& modal);
+        void draw_confirm_dialog(PyModalDialog& modal, float scale);
+        void draw_input_dialog(PyModalDialog& modal, float scale);
+        void draw_message_dialog(PyModalDialog& modal, float scale);
 
         mutable std::mutex mutex_;
         std::vector<PyModalDialog> modals_;
