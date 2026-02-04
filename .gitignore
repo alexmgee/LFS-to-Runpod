@@ -35,3 +35,4 @@ build*/**
 lichtfeld-studio.aps
 .vs__pycache__/
 *.pyc
+src/python/stubs/lichtfeld/build_info.pyi

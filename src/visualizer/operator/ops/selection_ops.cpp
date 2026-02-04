@@ -425,6 +425,11 @@ namespace lfs::vis::op {
 
         const bool add_mode = (op_ != SelectionOp::Remove);
         rm->setPreviewSelection(&stroke_selection_, add_mode);
+
+        std::vector<std::pair<float, float>> preview(num_verts);
+        for (size_t i = 0; i < num_verts; ++i)
+            preview[i] = {data[i * 2], data[i * 2 + 1]};
+        rm->setLassoPreview(preview, add_mode);
     }
 
     void SelectionStrokeOperator::computeRectSelection(OperatorContext& ctx) {
@@ -592,6 +597,7 @@ namespace lfs::vis::op {
             rm->clearPreviewSelection();
             rm->clearBrushState();
             rm->clearPolygonPreview();
+            rm->clearLassoPreview();
             rm->markDirty();
         }
     }
@@ -600,6 +606,7 @@ namespace lfs::vis::op {
         if (auto* rm = services().renderingOrNull()) {
             rm->clearPreviewSelection();
             rm->clearPolygonPreview();
+            rm->clearLassoPreview();
         }
     }
 
