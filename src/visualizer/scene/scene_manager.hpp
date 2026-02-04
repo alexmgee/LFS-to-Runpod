@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core/events.hpp"
+#include "core/export.hpp"
 #include "core/parameters.hpp"
 #include "core/services.hpp"
 #include "core/splat_data_mirror.hpp"
@@ -21,7 +22,7 @@ namespace lfs::vis {
     // Forward declarations
     class Trainer;
 
-    class SceneManager {
+    class LFS_VIS_API SceneManager {
     public:
         // Content type - what's loaded, not execution state
         enum class ContentType {

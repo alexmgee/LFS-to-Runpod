@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/export.hpp"
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <chrono>
@@ -169,7 +170,7 @@ namespace lfs::vis::input {
         static constexpr double DOUBLE_CLICK_WAIT_TIME = 0.4;
     };
 
-    class InputBindings {
+    class LFS_VIS_API InputBindings {
     public:
         InputBindings();
 
@@ -239,9 +240,9 @@ namespace lfs::vis::input {
         void notifyBindingsChanged();
     };
 
-    std::string getActionName(Action action);
-    std::string getKeyName(int key);
-    std::string getMouseButtonName(MouseButton button);
-    std::string getModifierString(int modifiers);
+    LFS_VIS_API std::string getActionName(Action action);
+    LFS_VIS_API std::string getKeyName(int key);
+    LFS_VIS_API std::string getMouseButtonName(MouseButton button);
+    LFS_VIS_API std::string getModifierString(int modifiers);
 
 } // namespace lfs::vis::input

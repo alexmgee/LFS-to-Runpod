@@ -365,23 +365,22 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
         PRIVATE
-        # Application layer dependencies (needed by application.cpp)
-        lfs_visualizer     # For Visualizer class
-        lfs_training       # For training setup
-        lfs_geometry       # For EuclideanTransform
-        lfs_core           # Core library
-        lfs_io             # For CacheLoader
-        lfs_mcp            # MCP server for AI agent integration
-        fastlfs_backend    # Rasterizer and optimizer
-        lfs_python_utils    # Python integration
+        lfs_visualizer
+        lfs_mcp
+        lfs_training
+        lfs_geometry
+        lfs_core
+        lfs_io
+        fastlfs_backend
+        lfs_python_utils
 
         ${OPENGL_LIBRARIES}
         CUDA::cudart
         spdlog::spdlog
         taywee::args
         OpenImageIO::OpenImageIO
-        glad::glad         # For splash screen
-        glfw               # For splash screen
+        glad::glad
+        glfw
 )
 
 # Copy nvImageCodec shared libraries next to executable for easy deployment
@@ -721,6 +720,14 @@ install(TARGETS lfs_logger
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 install(TARGETS lfs_event_bridge
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(TARGETS lfs_visualizer
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(TARGETS lfs_mcp
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
