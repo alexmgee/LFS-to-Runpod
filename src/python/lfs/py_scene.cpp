@@ -110,7 +110,7 @@ namespace lfs::python {
         if (node_->type != vis::NodeType::POINTCLOUD || !node_->point_cloud) {
             return std::nullopt;
         }
-        return PyPointCloud(node_->point_cloud.get(), false);
+        return PyPointCloud(node_->point_cloud.get(), false, node_, scene_);
     }
 
     // PyPointCloud filter implementation - uses tensor[mask] row selection
@@ -164,8 +164,22 @@ namespace lfs::python {
         assert(cols.shape().rank() == 2 && cols.shape()[1] == 3);
         assert(pts.shape()[0] == cols.shape()[0]);
 
-        pc_->means = pts.clone();
-        pc_->colors = cols.clone();
+        pc_->means = pts.to(core::Device::CUDA);
+        pc_->colors = cols.to(core::Device::CUDA);
+
+        const int64_t n = pc_->size();
+        if (node_) {
+            node_->gaussian_count = n;
+            if (n > 0) {
+                auto centroid = pc_->means.mean(0).cpu();
+                auto acc = centroid.accessor<float, 1>();
+                node_->centroid = glm::vec3(acc(0), acc(1), acc(2));
+            }
+        }
+        if (scene_) {
+            scene_->invalidateCache();
+            lfs::core::events::state::SceneChanged{}.emit();
+        }
     }
 
     std::optional<PyCropBox> PySceneNode::cropbox() {

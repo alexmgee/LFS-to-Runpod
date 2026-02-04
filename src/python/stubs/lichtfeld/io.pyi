@@ -40,6 +40,9 @@ class LoadResult:
 def load(path: str | os.PathLike, format: str | None = None, resize_factor: int | None = None, max_width: int | None = None, images_folder: str | None = None, progress: object | None = None) -> LoadResult:
     """Load a scene or splat file from path"""
 
+def load_point_cloud(path: str | os.PathLike) -> tuple:
+    """Load a PLY as point cloud, returns (means [N,3], colors [N,3]) tensors"""
+
 def save_ply(data: lichtfeld.scene.SplatData, path: str | os.PathLike, binary: bool = True, progress: object | None = None) -> None:
     """Save splat data as PLY file"""
 

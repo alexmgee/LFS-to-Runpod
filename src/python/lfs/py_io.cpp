@@ -16,6 +16,7 @@
 #include "core/camera.hpp"
 #include "core/logger.hpp"
 #include "core/splat_data.hpp"
+#include "formats/ply.hpp"
 #include "io/exporter.hpp"
 #include "io/loader.hpp"
 #include "training/dataset.hpp"
@@ -159,6 +160,17 @@ namespace lfs::python {
             nb::arg("max_width") = nb::none(), nb::arg("images_folder") = nb::none(),
             nb::arg("progress") = nb::none(),
             "Load a scene or splat file from path");
+
+        m.def(
+            "load_point_cloud",
+            [](const std::filesystem::path& path) -> nb::tuple {
+                const auto result = io::load_ply_point_cloud(path);
+                if (!result)
+                    throw std::runtime_error(std::format("Failed to load point cloud: {}", result.error()));
+                return nb::make_tuple(PyTensor(result->means, true), PyTensor(result->colors, true));
+            },
+            nb::arg("path"),
+            "Load a PLY as point cloud, returns (means [N,3], colors [N,3]) tensors");
 
         m.def(
             "save_ply",

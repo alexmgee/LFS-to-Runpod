@@ -269,8 +269,7 @@ def clone_from_url(
     if not git:
         raise PluginError("git not found in PATH")
 
-    # Clone the repository
-    cmd = [git, "clone", "--depth", "1"]
+    cmd = [git, "clone"]
     if branch:
         cmd.extend(["--branch", branch])
     cmd.extend([clone_url, str(temp_dir)])

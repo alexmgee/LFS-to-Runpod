@@ -2289,6 +2289,9 @@ namespace lfs::vis::gui {
             if (!cmd.output_path.empty()) {
                 params.dataset.output_path = cmd.output_path;
             }
+            if (!cmd.init_path.empty()) {
+                params.init_path = lfs::core::path_to_utf8(cmd.init_path);
+            }
             startAsyncImport(cmd.path, params);
         });
 

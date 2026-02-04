@@ -56,9 +56,7 @@ namespace lfs::io {
         constexpr int POSITION_DIMS = 3;
         constexpr int SCALE_DIMS = 3;
         constexpr int QUATERNION_DIMS = 4;
-        constexpr float DEFAULT_LOG_SCALE = -5.0f;
         constexpr float IDENTITY_QUATERNION_W = 1.0f;
-        constexpr float SCENE_SCALE_FACTOR = 0.5f;
         constexpr int SH_DEGREE_3_REST_COEFFS = 15;
         constexpr int SH_DEGREE_OFFSET = 1;
 

@@ -8,6 +8,7 @@
 #include "core/splat_data.hpp"
 #include "formats/ply.hpp"
 #include "io/error.hpp"
+#include <cassert>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -83,9 +84,52 @@ namespace lfs::io {
             options.progress(50.0f, "Parsing PLY data...");
         }
 
-        LOG_INFO("Loading PLY file: {}", lfs::core::path_to_utf8(path));
+        const bool is_gaussian = is_gaussian_splat_ply(path);
+        LOG_INFO("Loading PLY: {} ({})", lfs::core::path_to_utf8(path), is_gaussian ? "gaussian" : "point cloud");
 
-        auto splat_result = load_ply(path);
+        auto splat_result = is_gaussian
+            ? load_ply(path)
+            : [&]() -> std::expected<SplatData, std::string> {
+                const auto pc_result = load_ply_point_cloud(path);
+                if (!pc_result)
+                    return std::unexpected(pc_result.error());
+
+                const auto& pc = *pc_result;
+                const size_t N = static_cast<size_t>(pc.size());
+                assert(N > 0);
+
+                Tensor means = pc.means.to(Device::CUDA);
+                assert(means.shape()[0] == N && means.shape()[1] == 3);
+
+                Tensor sh0 = (pc.colors.is_valid() && pc.colors.numel() > 0)
+                    ? (((pc.colors.dtype() == DataType::UInt8
+                            ? pc.colors.to(DataType::Float32) / 255.0f
+                            : pc.colors
+                        ) - 0.5f) / ply_constants::SH_C0)
+                        .reshape({static_cast<int>(N), 1, 3}).to(Device::CUDA)
+                    : Tensor::zeros({N, 1, 3}, Device::CUDA);
+
+                Tensor shN = Tensor::zeros({N, 0, 3}, Device::CUDA);
+                Tensor scaling = Tensor::full({N, 3}, ply_constants::DEFAULT_LOG_SCALE, Device::CUDA);
+
+                auto rot_cpu = Tensor::zeros({N, 4}, Device::CPU);
+                float* const rot_ptr = rot_cpu.ptr<float>();
+                for (size_t i = 0; i < N; ++i)
+                    rot_ptr[i * 4] = 1.0f;
+                Tensor rotation = rot_cpu.to(Device::CUDA);
+
+                Tensor opacity = Tensor::zeros({N, 1}, Device::CUDA);
+
+                return SplatData(
+                    0,
+                    std::move(means),
+                    std::move(sh0),
+                    std::move(shN),
+                    std::move(scaling),
+                    std::move(rotation),
+                    std::move(opacity),
+                    ply_constants::SCENE_SCALE_FACTOR);
+            }();
 
         if (!splat_result) {
             return make_error(ErrorCode::CORRUPTED_DATA,

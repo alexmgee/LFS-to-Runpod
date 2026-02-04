@@ -115,9 +115,12 @@ namespace lfs::python {
     // PointCloud wrapper
     class PyPointCloud {
     public:
-        explicit PyPointCloud(core::PointCloud* pc, bool owns = false)
+        explicit PyPointCloud(core::PointCloud* pc, bool owns = false,
+                              vis::SceneNode* node = nullptr, vis::Scene* scene = nullptr)
             : pc_(pc),
-              owns_(owns) {
+              owns_(owns),
+              node_(node),
+              scene_(scene) {
             assert(pc_ != nullptr);
         }
 
@@ -176,6 +179,8 @@ namespace lfs::python {
     private:
         core::PointCloud* pc_;
         bool owns_;
+        vis::SceneNode* node_ = nullptr;
+        vis::Scene* scene_ = nullptr;
     };
 
     // Scene node wrapper
