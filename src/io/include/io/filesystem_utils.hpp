@@ -111,7 +111,20 @@ namespace lfs::io {
             }
         }
         if (info.images_path.empty()) {
-            info.images_path = base_path / "images";
+            bool has_colmap_in_root = !find_file_ci(base_path, "cameras.bin").empty() ||
+                                      !find_file_ci(base_path, "cameras.txt").empty();
+            if (has_colmap_in_root) {
+                std::error_code ec;
+                for (const auto& entry : fs::directory_iterator(base_path, ec)) {
+                    if (!ec && entry.is_regular_file() && is_image_file(entry.path())) {
+                        info.images_path = base_path;
+                        break;
+                    }
+                }
+            }
+            if (info.images_path.empty()) {
+                info.images_path = base_path / "images";
+            }
         }
 
         if (safe_is_directory(info.images_path)) {
@@ -123,11 +136,13 @@ namespace lfs::io {
             }
         }
 
-        if (safe_is_directory(base_path / "sparse" / "0")) {
-            info.sparse_path = base_path / "sparse" / "0";
-        } else if (safe_is_directory(base_path / "sparse")) {
-            info.sparse_path = base_path / "sparse";
-        } else {
+        for (const auto& sp : get_colmap_search_paths(base_path)) {
+            if (!find_file_ci(sp, "cameras.bin").empty() || !find_file_ci(sp, "cameras.txt").empty()) {
+                info.sparse_path = sp;
+                break;
+            }
+        }
+        if (info.sparse_path.empty()) {
             info.sparse_path = base_path / "sparse" / "0";
         }
 

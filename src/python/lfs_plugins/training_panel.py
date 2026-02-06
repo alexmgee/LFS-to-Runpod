@@ -738,7 +738,7 @@ class TrainingPanel(Panel):
                 layout.text_colored(tr("training_panel.no_save_steps"), theme.palette.text_dim)
         else:
             if steps:
-                layout.text(", ".join(str(s) for s in steps))
+                layout.label(", ".join(str(s) for s in steps))
             else:
                 layout.text_colored(tr("training_panel.no_save_steps"), theme.palette.text_dim)
 

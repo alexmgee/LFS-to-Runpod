@@ -121,7 +121,34 @@ namespace lfs::python {
         return !modals_.empty();
     }
 
-    void PyModalRegistry::draw_confirm_dialog(PyModalDialog& modal, const float scale) {
+    void PyModalRegistry::clear_for_test() {
+        std::lock_guard lock(mutex_);
+        modals_.clear();
+        next_id_ = 0;
+    }
+
+    bool PyModalRegistry::can_lock_mutex_for_test() const {
+        if (!mutex_.try_lock()) {
+            return false;
+        }
+        mutex_.unlock();
+        return true;
+    }
+
+    void PyModalRegistry::run_pending_callback_for_test(std::function<void()> callback) {
+        std::vector<ModalCallbackAction> pending_callbacks;
+        {
+            std::lock_guard lock(mutex_);
+            pending_callbacks.push_back(std::move(callback));
+        }
+
+        for (auto& pending_callback : pending_callbacks) {
+            pending_callback();
+        }
+    }
+
+    std::optional<PyModalRegistry::ModalCallbackAction> PyModalRegistry::draw_confirm_dialog(
+        PyModalDialog& modal, const float scale) {
         const float btn_w = BUTTON_WIDTH * scale;
 
         draw_text_centered(modal.message);
@@ -158,19 +185,29 @@ namespace lfs::python {
 
         if (!clicked_button.empty()) {
             if (modal.cpp_callback) {
-                modal.cpp_callback(clicked_button);
-            } else if (modal.callback.is_valid() && !modal.callback.is_none()) {
-                nb::gil_scoped_acquire gil;
-                try {
-                    modal.callback(clicked_button);
-                } catch (const std::exception& e) {
-                    LOG_ERROR("Modal callback error: {}", e.what());
-                }
+                auto cpp_cb = modal.cpp_callback;
+                const auto clicked = clicked_button;
+                return [cpp_cb = std::move(cpp_cb), clicked]() mutable { cpp_cb(clicked); };
+            }
+            if (modal.callback.is_valid() && !modal.callback.is_none()) {
+                nb::object py_cb = modal.callback;
+                const auto clicked = clicked_button;
+                return [py_cb = std::move(py_cb), clicked]() mutable {
+                    nb::gil_scoped_acquire gil;
+                    try {
+                        py_cb(clicked);
+                    } catch (const std::exception& e) {
+                        LOG_ERROR("Modal callback error: {}", e.what());
+                    }
+                };
             }
         }
+
+        return std::nullopt;
     }
 
-    void PyModalRegistry::draw_input_dialog(PyModalDialog& modal, const float scale) {
+    std::optional<PyModalRegistry::ModalCallbackAction> PyModalRegistry::draw_input_dialog(
+        PyModalDialog& modal, const float scale) {
         const float btn_w = BUTTON_WIDTH * scale;
 
         draw_text_centered(modal.message);
@@ -215,21 +252,28 @@ namespace lfs::python {
             modal.is_open = false;
         }
 
-        if (modal.callback.is_valid() && !modal.callback.is_none()) {
-            nb::gil_scoped_acquire gil;
-            try {
-                if (submitted) {
-                    modal.callback(nb::str(modal.input_value.c_str()));
-                } else if (cancelled) {
-                    modal.callback(nb::none());
+        if (modal.callback.is_valid() && !modal.callback.is_none() && (submitted || cancelled)) {
+            nb::object py_cb = modal.callback;
+            const auto input_value = modal.input_value;
+            return [py_cb = std::move(py_cb), submitted, input_value]() mutable {
+                nb::gil_scoped_acquire gil;
+                try {
+                    if (submitted) {
+                        py_cb(nb::str(input_value.c_str()));
+                    } else {
+                        py_cb(nb::none());
+                    }
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Modal callback error: {}", e.what());
                 }
-            } catch (const std::exception& e) {
-                LOG_ERROR("Modal callback error: {}", e.what());
-            }
+            };
         }
+
+        return std::nullopt;
     }
 
-    void PyModalRegistry::draw_message_dialog(PyModalDialog& modal, const float scale) {
+    std::optional<PyModalRegistry::ModalCallbackAction> PyModalRegistry::draw_message_dialog(
+        PyModalDialog& modal, const float scale) {
         const float btn_w = BUTTON_WIDTH * scale;
 
         draw_text_centered(modal.message);
@@ -248,77 +292,94 @@ namespace lfs::python {
         if (close) {
             modal.is_open = false;
             if (modal.callback.is_valid() && !modal.callback.is_none()) {
-                nb::gil_scoped_acquire gil;
-                try {
-                    modal.callback();
-                } catch (const std::exception& e) {
-                    LOG_ERROR("Modal callback error: {}", e.what());
-                }
+                nb::object py_cb = modal.callback;
+                return [py_cb = std::move(py_cb)]() mutable {
+                    nb::gil_scoped_acquire gil;
+                    try {
+                        py_cb();
+                    } catch (const std::exception& e) {
+                        LOG_ERROR("Modal callback error: {}", e.what());
+                    }
+                };
             }
         }
+
+        return std::nullopt;
     }
 
     void PyModalRegistry::draw_modals() {
-        std::lock_guard lock(mutex_);
+        std::vector<ModalCallbackAction> pending_callbacks;
 
-        const auto& t = lfs::vis::theme();
-        const float scale = get_shared_dpi_scale();
+        {
+            std::lock_guard lock(mutex_);
 
-        for (auto it = modals_.begin(); it != modals_.end();) {
-            auto& modal = *it;
+            const auto& t = lfs::vis::theme();
+            const float scale = get_shared_dpi_scale();
 
-            if (!modal.is_open) {
-                it = modals_.erase(it);
-                continue;
-            }
+            for (auto it = modals_.begin(); it != modals_.end();) {
+                auto& modal = *it;
 
-            const ImVec4 border_color = [&]() -> ImVec4 {
-                switch (modal.style) {
-                case MessageStyle::Warning: return t.palette.warning;
-                case MessageStyle::Error: return t.palette.error;
-                default: return t.palette.success;
-                }
-            }();
-
-            if (modal.needs_open) {
-                ImGui::OpenPopup(modal.title.c_str());
-                modal.needs_open = false;
-            }
-
-            ImGui::SetNextWindowSize(ImVec2(POPUP_WIDTH * scale, 0), ImGuiCond_Always);
-            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing,
-                                    ImVec2(0.5f, 0.5f));
-
-            t.pushModalStyle();
-            ImGui::PushStyleColor(ImGuiCol_Border, border_color);
-
-            if (ImGui::BeginPopupModal(modal.title.c_str(), nullptr, MODAL_FLAGS)) {
-                switch (modal.type) {
-                case ModalDialogType::Confirm:
-                    draw_confirm_dialog(modal, scale);
-                    break;
-                case ModalDialogType::Input:
-                    draw_input_dialog(modal, scale);
-                    break;
-                case ModalDialogType::Message:
-                    draw_message_dialog(modal, scale);
-                    break;
+                if (!modal.is_open) {
+                    it = modals_.erase(it);
+                    continue;
                 }
 
-                if (!modal.is_open)
-                    ImGui::CloseCurrentPopup();
+                const ImVec4 border_color = [&]() -> ImVec4 {
+                    switch (modal.style) {
+                    case MessageStyle::Warning: return t.palette.warning;
+                    case MessageStyle::Error: return t.palette.error;
+                    default: return t.palette.success;
+                    }
+                }();
 
-                ImGui::EndPopup();
+                if (modal.needs_open) {
+                    ImGui::OpenPopup(modal.title.c_str());
+                    modal.needs_open = false;
+                }
+
+                ImGui::SetNextWindowSize(ImVec2(POPUP_WIDTH * scale, 0), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing,
+                                        ImVec2(0.5f, 0.5f));
+
+                t.pushModalStyle();
+                ImGui::PushStyleColor(ImGuiCol_Border, border_color);
+
+                if (ImGui::BeginPopupModal(modal.title.c_str(), nullptr, MODAL_FLAGS)) {
+                    std::optional<ModalCallbackAction> callback_action;
+                    switch (modal.type) {
+                    case ModalDialogType::Confirm:
+                        callback_action = draw_confirm_dialog(modal, scale);
+                        break;
+                    case ModalDialogType::Input:
+                        callback_action = draw_input_dialog(modal, scale);
+                        break;
+                    case ModalDialogType::Message:
+                        callback_action = draw_message_dialog(modal, scale);
+                        break;
+                    }
+                    if (callback_action.has_value()) {
+                        pending_callbacks.push_back(std::move(*callback_action));
+                    }
+
+                    if (!modal.is_open)
+                        ImGui::CloseCurrentPopup();
+
+                    ImGui::EndPopup();
+                }
+
+                ImGui::PopStyleColor();
+                lfs::vis::Theme::popModalStyle();
+
+                if (!modal.is_open) {
+                    it = modals_.erase(it);
+                } else {
+                    ++it;
+                }
             }
+        }
 
-            ImGui::PopStyleColor();
-            lfs::vis::Theme::popModalStyle();
-
-            if (!modal.is_open) {
-                it = modals_.erase(it);
-            } else {
-                ++it;
-            }
+        for (auto& callback : pending_callbacks) {
+            callback();
         }
     }
 

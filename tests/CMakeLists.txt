@@ -6,6 +6,16 @@
 # Find GTest
 find_package(GTest CONFIG REQUIRED)
 
+# Reuse nanobind headers for Python UI regression tests
+if(NOT DEFINED NB_DIR)
+    find_package(Python REQUIRED COMPONENTS Interpreter Development Development.Module Development.SABIModule)
+    find_package(nanobind CONFIG REQUIRED)
+endif()
+
+if(COMMAND nanobind_build_library AND NOT TARGET nanobind-static)
+    nanobind_build_library(nanobind-static)
+endif()
+
 # =============================================================================
 # Unicode Path Test Only (no CUDA dependencies)
 # =============================================================================
@@ -220,6 +230,7 @@ set(TEST_FILES
     test_fastgs_analytical_gradients.cpp
     test_background_image.cpp
     test_operator_return_value.cpp
+    test_modal_registry_regression.cpp
     # test_property_schema_thread_safety.cpp  # Disabled: API mismatch after merge
     # test_property_system.cpp  # Disabled: API mismatch after merge
     test_tensor_nn_ops.cpp
@@ -237,6 +248,11 @@ foreach(TEST_FILE ${TEST_FILES})
         list(APPEND TEST_SOURCES ${TEST_FILE})
     endif()
 endforeach()
+
+# Support source for modal registry lock-order regression tests.
+list(APPEND TEST_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/python/lfs/py_ui_modals.cpp
+)
 
 # Build benchmark sources list
 set(BENCHMARK_SOURCES test_main.cpp)
@@ -265,7 +281,9 @@ target_include_directories(lichtfeld_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/src/training   # For training headers
     ${CMAKE_SOURCE_DIR}/src            # For module headers
+    ${CMAKE_SOURCE_DIR}/src/visualizer # For visualizer-relative headers (e.g. gui/ui_widgets.hpp)
     ${CMAKE_SOURCE_DIR}/external/spz   # SPZ library headers
+    ${NB_DIR}/include
     ${CUDAToolkit_INCLUDE_DIRS}
     ${OPENGL_INCLUDE_DIRS}
 )
@@ -295,6 +313,7 @@ target_link_libraries(lichtfeld_tests PRIVATE
 
     # External libraries
     GTest::gtest
+    nanobind-static
     ${TORCH_LIBRARIES}
     ${OPENGL_LIBRARIES}
     OpenImageIO::OpenImageIO
@@ -334,7 +353,9 @@ target_include_directories(lichtfeld_benchmarks PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/src/training
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/visualizer
     ${CMAKE_SOURCE_DIR}/external/spz
+    ${NB_DIR}/include
     ${CUDAToolkit_INCLUDE_DIRS}
     ${OPENGL_INCLUDE_DIRS}
 )

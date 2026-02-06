@@ -863,15 +863,22 @@ namespace lfs::python {
         // Check if any modals are open
         bool has_open_modals() const;
 
+        // Test hooks for lock-order regression coverage
+        void clear_for_test();
+        bool can_lock_mutex_for_test() const;
+        void run_pending_callback_for_test(std::function<void()> callback);
+
     private:
         PyModalRegistry() = default;
         ~PyModalRegistry() = default;
         PyModalRegistry(const PyModalRegistry&) = delete;
         PyModalRegistry& operator=(const PyModalRegistry&) = delete;
 
-        void draw_confirm_dialog(PyModalDialog& modal, float scale);
-        void draw_input_dialog(PyModalDialog& modal, float scale);
-        void draw_message_dialog(PyModalDialog& modal, float scale);
+        using ModalCallbackAction = std::function<void()>;
+
+        std::optional<ModalCallbackAction> draw_confirm_dialog(PyModalDialog& modal, float scale);
+        std::optional<ModalCallbackAction> draw_input_dialog(PyModalDialog& modal, float scale);
+        std::optional<ModalCallbackAction> draw_message_dialog(PyModalDialog& modal, float scale);
 
         mutable std::mutex mutex_;
         std::vector<PyModalDialog> modals_;

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "python_runtime.hpp"
+#include "core/logger.hpp"
 #include "core/modal_event.hpp"
 #include "core/operator_callbacks.hpp"
 #include "gil.hpp"
@@ -18,6 +19,23 @@
 namespace lfs::python {
 
     namespace {
+        class AtomicBoolResetGuard {
+            std::atomic<bool>& flag_;
+
+        public:
+            explicit AtomicBoolResetGuard(std::atomic<bool>& flag) noexcept
+                : flag_(flag) {}
+
+            ~AtomicBoolResetGuard() {
+                flag_.store(false, std::memory_order_release);
+            }
+
+            AtomicBoolResetGuard(const AtomicBoolResetGuard&) = delete;
+            AtomicBoolResetGuard& operator=(const AtomicBoolResetGuard&) = delete;
+            AtomicBoolResetGuard(AtomicBoolResetGuard&&) = delete;
+            AtomicBoolResetGuard& operator=(AtomicBoolResetGuard&&) = delete;
+        };
+
         PyBridge g_bridge{};
 
         ExportCallback g_export_callback = nullptr;
@@ -635,12 +653,11 @@ namespace lfs::python {
         if (g_bridge.prepare_ui)
             g_bridge.prepare_ui();
 
-        set_scene_for_python(scene);
+        const SceneContextGuard scene_guard(scene);
         {
             const GilAcquire gil;
             g_bridge.draw_modals();
         }
-        set_scene_for_python(nullptr);
     }
 
     bool has_python_modals() {
@@ -666,12 +683,11 @@ namespace lfs::python {
         if (g_bridge.prepare_ui)
             g_bridge.prepare_ui();
 
-        set_scene_for_python(scene);
+        const SceneContextGuard scene_guard(scene);
         {
             const GilAcquire gil;
             g_popup_draw_callback();
         }
-        set_scene_for_python(nullptr);
     }
 
     void set_export_callback(ExportCallback cb) { g_export_callback = cb; }
@@ -706,23 +722,23 @@ namespace lfs::python {
         bool expected = false;
         if (!in_cancel.compare_exchange_strong(expected, true))
             return;
+        const AtomicBoolResetGuard reset_guard(in_cancel);
 
         auto* callbacks = g_operator_callbacks.load();
-        if (!callbacks || !callbacks->hasCancelOperatorCallback()) {
-            in_cancel.store(false);
+        if (!callbacks || !callbacks->hasCancelOperatorCallback())
             return;
-        }
 
-        if (!can_acquire_gil()) {
-            in_cancel.store(false);
+        if (!can_acquire_gil())
             return;
-        }
 
-        {
+        try {
             const GilAcquire gil;
             callbacks->cancelOperator();
+        } catch (const std::exception& e) {
+            LOG_ERROR("cancel_active_operator callback failed: {}", e.what());
+        } catch (...) {
+            LOG_ERROR("cancel_active_operator callback failed with unknown exception");
         }
-        in_cancel.store(false);
     }
 
     bool invoke_operator(const std::string& operator_id) {
@@ -731,25 +747,24 @@ namespace lfs::python {
         bool expected = false;
         if (!in_invoke.compare_exchange_strong(expected, true))
             return false;
+        const AtomicBoolResetGuard reset_guard(in_invoke);
 
         auto* callbacks = g_operator_callbacks.load();
-        if (!callbacks || !callbacks->hasInvokeOperatorCallback()) {
-            in_invoke.store(false);
+        if (!callbacks || !callbacks->hasInvokeOperatorCallback())
             return false;
-        }
 
-        if (!can_acquire_gil()) {
-            in_invoke.store(false);
+        if (!can_acquire_gil())
             return false;
-        }
 
-        bool result;
-        {
+        try {
             const GilAcquire gil;
-            result = callbacks->invokeOperator(operator_id.c_str());
+            return callbacks->invokeOperator(operator_id.c_str());
+        } catch (const std::exception& e) {
+            LOG_ERROR("invoke_operator '{}' callback failed: {}", operator_id, e.what());
+        } catch (...) {
+            LOG_ERROR("invoke_operator '{}' callback failed with unknown exception", operator_id);
         }
-        in_invoke.store(false);
-        return result;
+        return false;
     }
 
     // Selection sub-mode

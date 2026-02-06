@@ -57,12 +57,12 @@ class ScriptsPanel(Panel):
                 layout.push_style_color("text", (0.5, 1.0, 0.5, 1.0))
 
             filename = script["path"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-            layout.text(filename)
+            layout.label(filename)
             layout.pop_style_color()
 
             if layout.is_item_hovered():
                 layout.begin_tooltip()
-                layout.text(f"Path: {script['path']}")
+                layout.label(f"Path: {script['path']}")
                 if script["has_error"]:
                     layout.separator()
                     layout.text_colored(f"Error: {script['error_message']}", (1.0, 0.4, 0.4, 1.0))
