@@ -1211,6 +1211,9 @@ class ViewportDrawContext:
     def draw_point_3d(self, pos: tuple[float, float, float], color: tuple[float, float, float, float], size: float = 4.0) -> None:
         """Draw a point at a 3D world-space position"""
 
+    def draw_text_3d(self, pos: tuple[float, float, float], text: str, color: tuple[float, float, float, float]) -> None:
+        """Draw text at a 3D world-space position (fixed in world space)"""
+
 def draw_handler(timing: str = 'POST_VIEW') -> object:
     """
     Decorator to register a viewport draw handler (PRE_VIEW, POST_VIEW, POST_UI)

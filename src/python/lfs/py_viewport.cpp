@@ -6,7 +6,10 @@
 #include "core/logger.hpp"
 #include "python/python_runtime.hpp"
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace lfs::python {
@@ -20,6 +23,17 @@ namespace lfs::python {
 
     std::optional<std::tuple<float, float>> PyViewportDrawContext::world_to_screen(std::tuple<float, float, float> pos) const {
         const auto [wx, wy, wz] = pos;
+
+        if (has_camera_state_) {
+            const glm::vec4 clip = proj_matrix_ * view_matrix_ * glm::vec4(wx, wy, wz, 1.0f);
+            if (clip.w <= 0.0f)
+                return std::nullopt;
+            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+            const float sx = viewport_pos_.x + (ndc.x * 0.5f + 0.5f) * viewport_size_.x;
+            const float sy = viewport_pos_.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewport_size_.y;
+            return std::make_tuple(sx, sy);
+        }
+
         if (wz <= 0.0f)
             return std::nullopt;
         const float sx = DEFAULT_VIEWPORT_WIDTH / 2.0f + wx * PROJECTION_SCALE / wz;
@@ -29,6 +43,20 @@ namespace lfs::python {
 
     std::tuple<float, float, float> PyViewportDrawContext::screen_to_world_ray(std::tuple<float, float> screen_pos) const {
         const auto [sx, sy] = screen_pos;
+
+        if (has_camera_state_) {
+            const float ndc_x = ((sx - viewport_pos_.x) / viewport_size_.x) * 2.0f - 1.0f;
+            const float ndc_y = 1.0f - ((sy - viewport_pos_.y) / viewport_size_.y) * 2.0f;
+            const glm::mat4 inv_proj = glm::inverse(proj_matrix_);
+            const glm::mat4 inv_view = glm::inverse(view_matrix_);
+            const glm::vec4 clip_near(ndc_x, ndc_y, -1.0f, 1.0f);
+            glm::vec4 eye = inv_proj * clip_near;
+            eye /= eye.w;
+            eye = glm::vec4(eye.x, eye.y, eye.z, 0.0f);
+            const glm::vec3 world_dir = glm::normalize(glm::vec3(inv_view * eye));
+            return {world_dir.x, world_dir.y, world_dir.z};
+        }
+
         const float dx = (sx - DEFAULT_VIEWPORT_WIDTH / 2.0f) / (DEFAULT_VIEWPORT_WIDTH / 2.0f);
         const float dy = -(sy - DEFAULT_VIEWPORT_HEIGHT / 2.0f) / (DEFAULT_VIEWPORT_HEIGHT / 2.0f);
         const float len = std::sqrt(dx * dx + dy * dy + 1.0f);
@@ -36,12 +64,20 @@ namespace lfs::python {
     }
 
     std::tuple<float, float, float> PyViewportDrawContext::camera_position() const {
+        if (has_camera_state_)
+            return {camera_pos_.x, camera_pos_.y, camera_pos_.z};
         return {0.0f, 0.0f, DEFAULT_CAMERA_Z};
     }
 
-    std::tuple<float, float, float> PyViewportDrawContext::camera_forward() const { return {0.0f, 0.0f, -1.0f}; }
+    std::tuple<float, float, float> PyViewportDrawContext::camera_forward() const {
+        if (has_camera_state_)
+            return {camera_fwd_.x, camera_fwd_.y, camera_fwd_.z};
+        return {0.0f, 0.0f, -1.0f};
+    }
 
     std::tuple<float, float> PyViewportDrawContext::viewport_size() const {
+        if (has_camera_state_)
+            return {viewport_size_.x, viewport_size_.y};
         return {DEFAULT_VIEWPORT_WIDTH, DEFAULT_VIEWPORT_HEIGHT};
     }
 
@@ -180,6 +216,27 @@ namespace lfs::python {
                                   {}});
     }
 
+    void PyViewportDrawContext::draw_text_3d(std::tuple<float, float, float> pos, const std::string& text,
+                                             std::tuple<float, float, float, float> color) {
+        draw_commands_.push_back({DrawCommand::TEXT_3D,
+                                  std::get<0>(pos), std::get<1>(pos), std::get<2>(pos),
+                                  0.0f, 0.0f, 0.0f,
+                                  std::get<0>(color), std::get<1>(color), std::get<2>(color), std::get<3>(color),
+                                  0.0f, 0.0f, text});
+    }
+
+    void PyViewportDrawContext::set_camera_state(const glm::mat4& view, const glm::mat4& proj,
+                                                 const glm::vec2& viewport_pos, const glm::vec2& viewport_size,
+                                                 const glm::vec3& camera_pos, const glm::vec3& camera_fwd) {
+        view_matrix_ = view;
+        proj_matrix_ = proj;
+        viewport_pos_ = viewport_pos;
+        viewport_size_ = viewport_size;
+        camera_pos_ = camera_pos;
+        camera_fwd_ = camera_fwd;
+        has_camera_state_ = true;
+    }
+
     PyViewportDrawRegistry& PyViewportDrawRegistry::instance() {
         static PyViewportDrawRegistry registry;
         return registry;
@@ -293,7 +350,10 @@ namespace lfs::python {
                  "Draw a 3D line between two world-space points")
             .def("draw_point_3d", &PyViewportDrawContext::draw_point_3d, nb::arg("pos"),
                  nb::arg("color"), nb::arg("size") = 4.0f,
-                 "Draw a point at a 3D world-space position");
+                 "Draw a point at a 3D world-space position")
+            .def("draw_text_3d", &PyViewportDrawContext::draw_text_3d, nb::arg("pos"), nb::arg("text"),
+                 nb::arg("color"),
+                 "Draw text at a 3D world-space position (fixed in world space)");
 
         m.def(
             "draw_handler",
@@ -304,7 +364,7 @@ namespace lfs::python {
                 else if (timing_str == "POST_UI")
                     timing = DrawHandlerTiming::PostUI;
 
-                static int handler_counter = 0;
+                static std::atomic<int> handler_counter{0};
                 return nb::cpp_function([timing](nb::object func) {
                     std::string id = "draw_handler_" + std::to_string(++handler_counter);
                     PyViewportDrawRegistry::instance().add_handler(id, func, timing);

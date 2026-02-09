@@ -157,6 +157,7 @@ nanobind_add_module(
     lfs/py_ui_panels.cpp
     lfs/py_uilist.cpp
     lfs/py_viewport.cpp
+    viewport_overlay.cpp
     lfs/py_mcp.cpp
     lfs/py_rendering.cpp
     lfs/py_selection.cpp
