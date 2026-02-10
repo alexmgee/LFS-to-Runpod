@@ -87,11 +87,8 @@ namespace lfs::python {
         pkg.def(
             "embedded_python_path",
             []() -> std::string {
-#ifdef LFS_PYTHON_EXECUTABLE
-                return LFS_PYTHON_EXECUTABLE;
-#else
-                return "";
-#endif
+                const auto p = lfs::core::getEmbeddedPython();
+                return p.empty() ? "" : p.string();
             },
             "Get path to embedded Python executable (empty string if not available)");
 

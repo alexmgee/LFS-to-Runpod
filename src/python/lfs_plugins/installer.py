@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Plugin dependency installer using uv."""
 
+import logging
 import shutil
 import subprocess
 import sys
@@ -9,6 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Callable, Tuple
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 from .plugin import PluginInstance
 from .errors import PluginDependencyError, PluginError
@@ -52,6 +55,12 @@ class PluginInstaller:
         embedded_python = self._get_embedded_python()
         if embedded_python and embedded_python.exists():
             cmd.extend(["--python", str(embedded_python)])
+            logger.info("Plugin venv using embedded Python: %s", embedded_python)
+        else:
+            logger.warning(
+                "Embedded Python not found (resolved=%s), uv will use system Python",
+                embedded_python,
+            )
 
         result = subprocess.run(
             cmd,
