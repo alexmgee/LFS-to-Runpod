@@ -1256,6 +1256,9 @@ namespace lfs::vis {
                 }
             } else if (ext == ".ply" || ext == ".sog" || ext == ".spz") {
                 splat_files.push_back(filepath);
+            } else if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb" ||
+                       ext == ".stl" || ext == ".dae" || ext == ".3ds") {
+                splat_files.push_back(filepath);
             } else if (ext == ".bin" || ext == ".txt") {
                 // Check if this is a COLMAP file (cameras.bin, images.bin, etc.)
                 auto filename = filepath.filename().string();
@@ -1310,7 +1313,7 @@ namespace lfs::vis {
         }
 
         if (!unrecognized_files.empty() && splat_files.empty() && !dataset_path) {
-            static constexpr auto SUPPORTED_FORMATS = "Supported formats: .ply, .sog, .spz, .json, .resume, or dataset directories";
+            static constexpr auto SUPPORTED_FORMATS = "Supported formats: .ply, .sog, .spz, .obj, .fbx, .gltf, .glb, .stl, .dae, .json, .resume, or dataset directories";
             LOG_DEBUG("Dropped {} unrecognized file(s)", unrecognized_files.size());
             state::FileDropFailed{.files = unrecognized_files, .error = SUPPORTED_FORMATS}.emit();
         }
@@ -1319,12 +1322,15 @@ namespace lfs::vis {
     void InputController::handleGoToCamView(const lfs::core::events::cmd::GoToCamView& event) {
         LOG_TIMER_TRACE("HandleGoToCamView");
 
-        if (!services().trainerOrNull()) {
-            LOG_ERROR("GoToCamView: trainer_manager_ not initialized");
-            return;
+        std::shared_ptr<const lfs::core::Camera> cam_data;
+        if (auto* trainer = services().trainerOrNull()) {
+            cam_data = trainer->getCamById(event.cam_id);
         }
-
-        auto cam_data = services().trainerOrNull()->getCamById(event.cam_id);
+        if (!cam_data) {
+            if (auto* scene_mgr = services().sceneOrNull()) {
+                cam_data = scene_mgr->getScene().getCameraByUid(event.cam_id);
+            }
+        }
         if (!cam_data) {
             LOG_ERROR("Camera ID {} not found", event.cam_id);
             return;

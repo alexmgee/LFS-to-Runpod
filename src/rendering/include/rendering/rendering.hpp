@@ -19,6 +19,7 @@
 namespace lfs::core {
     class SplatData;
     struct PointCloud;
+    struct MeshData;
     class Camera;
     class Tensor;
 } // namespace lfs::core
@@ -298,6 +299,18 @@ namespace lfs::rendering {
         virtual bool isAxisVisible(int axis) const = 0;
     };
 
+    struct MeshRenderOptions {
+        bool wireframe_overlay = false;
+        glm::vec3 wireframe_color{0.2f};
+        float wireframe_width = 1.0f;
+        glm::vec3 light_dir{0.3f, 1.0f, 0.5f};
+        float light_intensity = 1.5f;
+        float ambient = 0.15f;
+        bool backface_culling = true;
+        bool shadow_enabled = false;
+        int shadow_map_resolution = 2048;
+    };
+
     // Main rendering engine
     class RenderingEngine {
     public:
@@ -323,6 +336,23 @@ namespace lfs::rendering {
         // Split view rendering
         virtual Result<RenderResult> renderSplitView(
             const SplitViewRequest& request) = 0;
+
+        virtual Result<void> renderMesh(
+            const lfs::core::MeshData& mesh,
+            const ViewportData& viewport,
+            const glm::mat4& model_transform = glm::mat4(1.0f),
+            const MeshRenderOptions& options = {},
+            bool use_fbo = false) = 0;
+
+        virtual unsigned int getMeshColorTexture() const = 0;
+        virtual unsigned int getMeshDepthTexture() const = 0;
+        virtual unsigned int getMeshFramebuffer() const = 0;
+        virtual bool hasMeshRender() const = 0;
+        virtual void resetMeshFrameState() = 0;
+
+        virtual Result<void> compositeMeshAndSplat(
+            const RenderResult& splat_result,
+            const glm::ivec2& viewport_size) = 0;
 
         // Present to screen
         virtual Result<void> presentToScreen(

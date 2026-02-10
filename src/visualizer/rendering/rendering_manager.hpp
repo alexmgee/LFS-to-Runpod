@@ -143,6 +143,16 @@ namespace lfs::vis {
         bool depth_clip_enabled = false;
         float depth_clip_far = 100.0f;
 
+        bool mesh_wireframe = false;
+        glm::vec3 mesh_wireframe_color{0.2f};
+        float mesh_wireframe_width = 1.0f;
+        glm::vec3 mesh_light_dir{0.3f, 1.0f, 0.5f};
+        float mesh_light_intensity = 1.5f;
+        float mesh_ambient = 0.15f;
+        bool mesh_backface_culling = true;
+        bool mesh_shadow_enabled = false;
+        int mesh_shadow_resolution = 2048;
+
         // Depth filter (Selection tool only - separate from crop box)
         bool depth_filter_enabled = false;
         glm::vec3 depth_filter_min = glm::vec3(-50.0f, -10000.0f, 0.0f);
@@ -541,6 +551,8 @@ namespace lfs::vis {
 
         std::optional<GTComparisonContext> gt_context_;
         int gt_context_camera_id_ = -1;
+
+        std::atomic<bool> mesh_dirty_{false};
 
         // Gizmo state for wireframe sync
         bool cropbox_gizmo_active_ = false;

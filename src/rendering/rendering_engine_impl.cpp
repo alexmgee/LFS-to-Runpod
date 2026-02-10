@@ -4,6 +4,7 @@
 
 #include "rendering_engine_impl.hpp"
 #include "core/logger.hpp"
+#include "core/mesh_data.hpp"
 #include "core/point_cloud.hpp"
 #include "framebuffer_factory.hpp"
 #include "geometry/bounding_box.hpp"
@@ -22,7 +23,6 @@ namespace lfs::rendering {
     Result<void> RenderingEngineImpl::initialize() {
         LOG_TIMER("RenderingEngine::initialize");
 
-        // Check if already initialized by checking if key components exist
         if (quad_shader_.valid()) {
             LOG_TRACE("RenderingEngine already initialized, skipping");
             return {};
@@ -30,10 +30,8 @@ namespace lfs::rendering {
 
         LOG_INFO("Initializing rendering engine...");
 
-        // Create screen renderer with preferred mode
         screen_renderer_ = std::make_shared<ScreenQuadRenderer>(getPreferredFrameBufferMode());
 
-        // Initialize split view renderer
         split_view_renderer_ = std::make_unique<SplitViewRenderer>();
         if (auto result = split_view_renderer_->initialize(); !result) {
             LOG_ERROR("Failed to initialize split view renderer: {}", result.error());
@@ -84,18 +82,28 @@ namespace lfs::rendering {
         }
         LOG_DEBUG("Viewport gizmo initialized");
 
-        // Initialize camera frustum renderer
         if (auto result = camera_frustum_renderer_.init(); !result) {
             LOG_ERROR("Failed to initialize camera frustum renderer: {}", result.error());
-            // Non-critical, continue without it
         } else {
             LOG_DEBUG("Camera frustum renderer initialized");
+        }
+
+        if (auto result = mesh_renderer_.initialize(); !result) {
+            LOG_WARN("Failed to initialize mesh renderer: {}", result.error());
+        } else {
+            LOG_DEBUG("Mesh renderer initialized");
+        }
+
+        if (auto result = depth_compositor_.initialize(); !result) {
+            LOG_WARN("Failed to initialize depth compositor: {}", result.error());
+        } else {
+            LOG_DEBUG("Depth compositor initialized");
         }
 
         auto shader_result = initializeShaders();
         if (!shader_result) {
             LOG_ERROR("Failed to initialize shaders: {}", shader_result.error());
-            shutdown(); // Clean up partial initialization
+            shutdown();
             return std::unexpected(shader_result.error());
         }
 
@@ -105,16 +113,13 @@ namespace lfs::rendering {
 
     void RenderingEngineImpl::shutdown() {
         LOG_DEBUG("Shutting down rendering engine");
-        // Just reset/clean up - safe to call multiple times
         quad_shader_ = ManagedShader();
         screen_renderer_.reset();
         split_view_renderer_.reset();
         viewport_gizmo_.shutdown();
-        // Other components clean up in their destructors
     }
 
     bool RenderingEngineImpl::isInitialized() const {
-        // Check if key components exist
         return quad_shader_.valid() && screen_renderer_;
     }
 
@@ -140,16 +145,14 @@ namespace lfs::rendering {
             return std::unexpected("Rendering engine not initialized");
         }
 
-        // Validate request
         if (request.viewport.size.x <= 0 || request.viewport.size.y <= 0 ||
-            request.viewport.size.x > 16384 || request.viewport.size.y > 16384) {
+            request.viewport.size.x > MAX_VIEWPORT_SIZE || request.viewport.size.y > MAX_VIEWPORT_SIZE) {
             LOG_ERROR("Invalid viewport dimensions: {}x{}", request.viewport.size.x, request.viewport.size.y);
             return std::unexpected("Invalid viewport dimensions");
         }
 
         LOG_TRACE("Rendering gaussians with viewport {}x{}", request.viewport.size.x, request.viewport.size.y);
 
-        // Convert to internal pipeline request using designated initializers
         RenderingPipeline::RenderRequest pipeline_req{
             .view_rotation = request.viewport.rotation,
             .view_translation = request.viewport.translation,
@@ -192,26 +195,22 @@ namespace lfs::rendering {
             .orthographic = request.orthographic,
             .ortho_scale = request.ortho_scale};
 
-        // Convert crop box if present
         std::unique_ptr<lfs::geometry::BoundingBox> temp_crop_box;
         Tensor crop_box_transform_tensor, crop_box_min_tensor, crop_box_max_tensor;
         if (request.crop_box.has_value()) {
             temp_crop_box = std::make_unique<lfs::geometry::BoundingBox>();
             temp_crop_box->setBounds(request.crop_box->min, request.crop_box->max);
 
-            // Convert the transform matrix to EuclideanTransform
             lfs::geometry::EuclideanTransform transform(request.crop_box->transform);
             temp_crop_box->setworld2BBox(transform);
 
             pipeline_req.crop_box = temp_crop_box.get();
 
-            // Prepare crop box tensors for GPU visualization
-            // The transform is world-to-box (inverse of box-to-world)
             const glm::mat4& w2b = request.crop_box->transform;
             std::vector<float> transform_data(16);
             for (int row = 0; row < 4; ++row) {
                 for (int col = 0; col < 4; ++col) {
-                    transform_data[row * 4 + col] = w2b[col][row]; // Transpose to row-major
+                    transform_data[row * 4 + col] = w2b[col][row];
                 }
             }
             crop_box_transform_tensor = Tensor::from_vector(transform_data, {4, 4}, lfs::core::Device::CPU).cuda();
@@ -230,15 +229,13 @@ namespace lfs::rendering {
             pipeline_req.crop_parent_node_index = request.crop_parent_node_index;
         }
 
-        // Convert ellipsoid if present
         Tensor ellipsoid_transform_tensor, ellipsoid_radii_tensor;
         if (request.ellipsoid.has_value()) {
-            // Transform is world-to-ellipsoid-local
             const glm::mat4& w2e = request.ellipsoid->transform;
             std::vector<float> transform_data(16);
             for (int row = 0; row < 4; ++row) {
                 for (int col = 0; col < 4; ++col) {
-                    transform_data[row * 4 + col] = w2e[col][row]; // Transpose to row-major
+                    transform_data[row * 4 + col] = w2e[col][row];
                 }
             }
             ellipsoid_transform_tensor = Tensor::from_vector(transform_data, {4, 4}, lfs::core::Device::CPU).cuda();
@@ -253,15 +250,13 @@ namespace lfs::rendering {
             pipeline_req.ellipsoid_parent_node_index = request.ellipsoid_parent_node_index;
         }
 
-        // Convert depth filter if present (Selection tool - separate from crop box)
         Tensor depth_filter_transform_tensor, depth_filter_min_tensor, depth_filter_max_tensor;
         if (request.depth_filter.has_value()) {
-            // Prepare depth filter tensors for GPU desaturation
             const glm::mat4& w2b = request.depth_filter->transform;
             std::vector<float> transform_data(16);
             for (int row = 0; row < 4; ++row) {
                 for (int col = 0; col < 4; ++col) {
-                    transform_data[row * 4 + col] = w2b[col][row]; // Transpose to row-major
+                    transform_data[row * 4 + col] = w2b[col][row];
                 }
             }
             depth_filter_transform_tensor = Tensor::from_vector(transform_data, {4, 4}, lfs::core::Device::CPU).cuda();
@@ -284,7 +279,6 @@ namespace lfs::rendering {
             return std::unexpected(pipeline_result.error());
         }
 
-        // Convert result
         RenderResult result{
             .image = std::make_shared<Tensor>(pipeline_result->image),
             .depth = std::make_shared<Tensor>(pipeline_result->depth),
@@ -310,9 +304,8 @@ namespace lfs::rendering {
             return std::unexpected("Rendering engine not initialized");
         }
 
-        // Validate request
         if (request.viewport.size.x <= 0 || request.viewport.size.y <= 0 ||
-            request.viewport.size.x > 16384 || request.viewport.size.y > 16384) {
+            request.viewport.size.x > MAX_VIEWPORT_SIZE || request.viewport.size.y > MAX_VIEWPORT_SIZE) {
             LOG_ERROR("Invalid viewport dimensions: {}x{}", request.viewport.size.x, request.viewport.size.y);
             return std::unexpected("Invalid viewport dimensions");
         }
@@ -374,7 +367,6 @@ namespace lfs::rendering {
             return std::unexpected(pipeline_result.error());
         }
 
-        // Convert result
         RenderResult result{
             .image = std::make_shared<Tensor>(pipeline_result->image),
             .depth = std::make_shared<Tensor>(pipeline_result->depth),
@@ -426,7 +418,6 @@ namespace lfs::rendering {
         LOG_TRACE("Presenting to screen at ({}, {}) size {}x{}",
                   viewport_pos.x, viewport_pos.y, viewport_size.x, viewport_size.y);
 
-        // Convert back to internal result type
         RenderingPipeline::RenderResult internal_result;
         internal_result.image = *result.image;
         internal_result.depth = result.depth ? *result.depth : Tensor();
@@ -442,10 +433,6 @@ namespace lfs::rendering {
             LOG_ERROR("Failed to upload to screen: {}", upload_result.error());
             return upload_result;
         }
-
-        // Note: glViewport should be set by the caller to the DISPLAY size
-        // The viewport_size here is the IMAGE size for upload validation
-        // The fullscreen quad will stretch the texture to fill whatever viewport is set
 
         return screen_renderer_->render(quad_shader_);
     }
@@ -593,12 +580,10 @@ namespace lfs::rendering {
         [[maybe_unused]] const glm::vec3& position,
         [[maybe_unused]] const ViewportData& viewport,
         [[maybe_unused]] float scale) {
-        // Deprecated - translation gizmo removed, now using ImGuizmo
         return {};
     }
 
     std::shared_ptr<GizmoInteraction> RenderingEngineImpl::getGizmoInteraction() {
-        // Deprecated - return nullptr since gizmo is removed
         return nullptr;
     }
 
@@ -677,7 +662,6 @@ namespace lfs::rendering {
 
         LOG_TRACE("Rendering with pipeline");
 
-        // Convert from public types to internal types using designated initializers
         RenderingPipeline::RenderRequest internal_request{
             .view_rotation = request.view_rotation,
             .view_translation = request.view_translation,
@@ -697,12 +681,10 @@ namespace lfs::rendering {
 
         auto result = pipeline_.render(model, internal_request);
 
-        // Convert back to public types
         RenderingPipelineResult public_result;
 
         if (!result) {
             public_result.valid = false;
-            // Log error but don't expose internal error details
             LOG_ERROR("Pipeline render error: {}", result.error());
         } else {
             public_result.valid = result->valid;
@@ -741,7 +723,6 @@ namespace lfs::rendering {
     }
 
     Result<std::shared_ptr<IBoundingBox>> RenderingEngineImpl::createBoundingBox() {
-        // Make sure we're initialized first
         if (!isInitialized()) {
             LOG_ERROR("RenderingEngine must be initialized before creating bounding boxes");
             return std::unexpected("RenderingEngine must be initialized before creating bounding boxes");
@@ -757,7 +738,6 @@ namespace lfs::rendering {
     }
 
     Result<std::shared_ptr<ICoordinateAxes>> RenderingEngineImpl::createCoordinateAxes() {
-        // Make sure we're initialized first
         if (!isInitialized()) {
             LOG_ERROR("RenderingEngine must be initialized before creating coordinate axes");
             return std::unexpected("RenderingEngine must be initialized before creating coordinate axes");
@@ -770,6 +750,75 @@ namespace lfs::rendering {
         }
         LOG_DEBUG("Created coordinate axes renderer");
         return axes;
+    }
+
+    Result<void> RenderingEngineImpl::renderMesh(
+        const lfs::core::MeshData& mesh,
+        const ViewportData& viewport,
+        const glm::mat4& model_transform,
+        const MeshRenderOptions& options,
+        bool use_fbo) {
+
+        if (!mesh_renderer_.isInitialized())
+            return std::unexpected("Mesh renderer not initialized");
+
+        mesh_renderer_.resize(viewport.size.x, viewport.size.y);
+
+        const glm::mat4 view = createViewMatrix(viewport);
+        const glm::mat4 projection = createProjectionMatrix(viewport);
+        const glm::vec3 camera_pos = -glm::transpose(glm::mat3(view)) * glm::vec3(view[3]);
+
+        const bool clear_fbo = !mesh_rendered_this_frame_;
+        auto result = mesh_renderer_.render(mesh, model_transform, view, projection, camera_pos, options, true, clear_fbo);
+        if (result) {
+            mesh_rendered_this_frame_ = true;
+        }
+        return result;
+    }
+
+    unsigned int RenderingEngineImpl::getMeshColorTexture() const {
+        return mesh_renderer_.getColorTexture();
+    }
+
+    unsigned int RenderingEngineImpl::getMeshDepthTexture() const {
+        return mesh_renderer_.getDepthTexture();
+    }
+
+    unsigned int RenderingEngineImpl::getMeshFramebuffer() const {
+        return mesh_renderer_.getFramebuffer();
+    }
+
+    bool RenderingEngineImpl::hasMeshRender() const {
+        return mesh_rendered_this_frame_ && mesh_renderer_.isInitialized();
+    }
+
+    Result<void> RenderingEngineImpl::compositeMeshAndSplat(
+        const RenderResult& splat_result,
+        const glm::ivec2& viewport_size) {
+
+        if (!depth_compositor_.isInitialized())
+            return std::unexpected("Depth compositor not initialized");
+
+        if (!mesh_rendered_this_frame_)
+            return {};
+
+        const GLuint splat_color = screen_renderer_->getUploadedColorTexture();
+        const GLuint splat_depth = screen_renderer_->getUploadedDepthTexture();
+
+        if (splat_color == 0 || splat_depth == 0)
+            return {};
+
+        const glm::vec2 splat_tc_scale = screen_renderer_->getTexcoordScale();
+
+        return depth_compositor_.composite(
+            splat_color, splat_depth,
+            mesh_renderer_.getColorTexture(),
+            mesh_renderer_.getDepthTexture(),
+            splat_result.near_plane,
+            splat_result.far_plane,
+            true,
+            splat_tc_scale,
+            splat_result.depth_is_ndc);
     }
 
 } // namespace lfs::rendering

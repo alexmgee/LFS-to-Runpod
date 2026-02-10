@@ -162,6 +162,8 @@ namespace lfs::vis {
         // Loads cameras from sparse folder and displays frustums without needing image files
         void loadColmapCamerasOnly(const std::filesystem::path& sparse_path);
 
+        void prepareTrainingFromScene();
+
         // Apply pre-loaded dataset to scene (for async loading)
         // The LoadResult comes from background thread, scene modification happens on main thread
         std::expected<void, std::string> applyLoadedDataset(
@@ -211,7 +213,6 @@ namespace lfs::vis {
         /// Mirror selected gaussians along specified axis
         bool executeMirror(lfs::core::MirrorAxis axis);
 
-        // Gaussian-level selection operations (moved from VisualizerImpl)
         void deleteSelectedGaussians();
         void invertSelection();
         void deselectAllGaussians();
@@ -221,11 +222,9 @@ namespace lfs::vis {
         void selectRect(float x0, float y0, float x1, float y1, const std::string& mode);
         void applySelectionMask(const std::vector<uint8_t>& mask);
 
-        // Selection service
         void initSelectionService();
         [[nodiscard]] SelectionService* getSelectionService() { return selection_service_.get(); }
 
-        // Appearance model (PPISP) - owned by scene_manager, not scene
         void setAppearanceModel(std::unique_ptr<lfs::training::PPISP> ppisp,
                                 std::unique_ptr<lfs::training::PPISPControllerPool> controller_pool = nullptr);
         void clearAppearanceModel();
@@ -271,6 +270,7 @@ namespace lfs::vis {
         // Clipboard for copy/paste (supports multi-selection)
         struct ClipboardEntry {
             std::unique_ptr<lfs::core::SplatData> data;
+            std::shared_ptr<lfs::core::MeshData> mesh;
             glm::mat4 transform{1.0f};
             struct HierarchyNode {
                 core::NodeType type = core::NodeType::SPLAT;
@@ -289,7 +289,6 @@ namespace lfs::vis {
         ClipboardEntry::HierarchyNode copyNodeHierarchy(const core::SceneNode* node);
         void pasteNodeHierarchy(const ClipboardEntry::HierarchyNode& src, core::NodeId parent_id);
 
-        // Standalone appearance model (for viewing without training)
         std::unique_ptr<lfs::training::PPISP> appearance_ppisp_;
         std::unique_ptr<lfs::training::PPISPControllerPool> appearance_controller_pool_;
 

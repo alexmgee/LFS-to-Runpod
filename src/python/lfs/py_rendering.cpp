@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <numbers>
 
 namespace nb = nanobind;
 
@@ -241,6 +242,26 @@ namespace lfs::python {
         add_ppisp_float(&PPISP::color_blue_x, "ppisp_color_blue_x", "Blue X", "Blue chromaticity X", 0.0, -0.5, 0.5);
         add_ppisp_float(&PPISP::color_blue_y, "ppisp_color_blue_y", "Blue Y", "Blue chromaticity Y", 0.0, -0.5, 0.5);
 
+        add_bool(&Proxy::mesh_wireframe, "mesh_wireframe", "Wireframe Overlay", "Show wireframe on meshes", false);
+        add_color3(&Proxy::mesh_wireframe_color, "mesh_wireframe_color", "Wireframe Color", "Mesh wireframe color",
+                   {0.2, 0.2, 0.2});
+        add_float(&Proxy::mesh_wireframe_width, "mesh_wireframe_width", "Wireframe Width", "Wireframe line width", 1.0,
+                  0.5, 5.0);
+        add_float(&Proxy::mesh_light_intensity, "mesh_light_intensity", "Light Intensity", "Mesh light intensity", 1.5,
+                  0.0, 5.0);
+        add_float(&Proxy::mesh_ambient, "mesh_ambient", "Ambient", "Mesh ambient light", 0.15, 0.0, 1.0);
+        add_bool(&Proxy::mesh_backface_culling, "mesh_backface_culling", "Backface Culling", "Cull mesh back faces",
+                 true);
+        add_bool(&Proxy::mesh_shadow_enabled, "mesh_shadow_enabled", "Shadows", "Enable shadow mapping for meshes",
+                 false);
+        add_int_enum(&Proxy::mesh_shadow_resolution, "mesh_shadow_resolution", "Shadow Resolution",
+                     "Shadow map resolution",
+                     {{"512", "512", 512},
+                      {"1024", "1024", 1024},
+                      {"2048", "2048", 2048},
+                      {"4096", "4096", 4096}},
+                     2);
+
         PropertyRegistry::instance().register_group(std::move(group));
     }
 
@@ -368,7 +389,7 @@ namespace {
     constexpr float DEFAULT_SCALE_THRESHOLD = 0.01f;
 
     float fov_to_focal(float fov_degrees, int pixels) {
-        return static_cast<float>(pixels) / (2.0f * std::tan(fov_degrees * M_PI / 360.0f));
+        return static_cast<float>(pixels) / (2.0f * std::tan(fov_degrees * std::numbers::pi_v<float> / 360.0f));
     }
 
     std::unique_ptr<lfs::core::Camera> create_camera(const lfs::core::Tensor& R, const lfs::core::Tensor& T, int width,

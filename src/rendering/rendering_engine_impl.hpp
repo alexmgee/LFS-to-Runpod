@@ -7,8 +7,10 @@
 #include "axes_renderer.hpp"
 #include "bbox_renderer.hpp"
 #include "camera_frustum_renderer.hpp"
+#include "depth_compositor.hpp"
 #include "ellipsoid_renderer.hpp"
 #include "grid_renderer.hpp"
+#include "mesh_renderer.hpp"
 #include "pivot_renderer.hpp"
 #include "rendering/rendering.hpp"
 #include "rendering_pipeline.hpp"
@@ -38,6 +40,23 @@ namespace lfs::rendering {
 
         Result<RenderResult> renderSplitView(
             const SplitViewRequest& request) override;
+
+        Result<void> renderMesh(
+            const lfs::core::MeshData& mesh,
+            const ViewportData& viewport,
+            const glm::mat4& model_transform = glm::mat4(1.0f),
+            const MeshRenderOptions& options = {},
+            bool use_fbo = false) override;
+
+        unsigned int getMeshColorTexture() const override;
+        unsigned int getMeshDepthTexture() const override;
+        unsigned int getMeshFramebuffer() const override;
+        bool hasMeshRender() const override;
+        void resetMeshFrameState() override { mesh_rendered_this_frame_ = false; }
+
+        Result<void> compositeMeshAndSplat(
+            const RenderResult& splat_result,
+            const glm::ivec2& viewport_size) override;
 
         Result<void> presentToScreen(
             const RenderResult& result,
@@ -126,12 +145,10 @@ namespace lfs::rendering {
 
         void clearFrustumCache() override;
 
-        // Pipeline compatibility
         RenderingPipelineResult renderWithPipeline(
             const lfs::core::SplatData& model,
             const RenderingPipelineRequest& request) override;
 
-        // Factory methods
         Result<std::shared_ptr<IBoundingBox>> createBoundingBox() override;
         Result<std::shared_ptr<ICoordinateAxes>> createCoordinateAxes() override;
 
@@ -140,14 +157,10 @@ namespace lfs::rendering {
         glm::mat4 createProjectionMatrix(const ViewportData& viewport) const;
         glm::mat4 createViewMatrix(const ViewportData& viewport) const;
 
-        // Core components
         RenderingPipeline pipeline_;
         std::shared_ptr<ScreenQuadRenderer> screen_renderer_;
-
-        // Split view renderer
         std::unique_ptr<SplitViewRenderer> split_view_renderer_;
 
-        // Overlay renderers
         RenderInfiniteGrid grid_renderer_;
         RenderBoundingBox bbox_renderer_;
         EllipsoidRenderer ellipsoid_renderer_;
@@ -156,7 +169,10 @@ namespace lfs::rendering {
         CameraFrustumRenderer camera_frustum_renderer_;
         RenderPivotPoint pivot_renderer_;
 
-        // Shaders
+        MeshRenderer mesh_renderer_;
+        DepthCompositor depth_compositor_;
+        bool mesh_rendered_this_frame_ = false;
+
         ManagedShader quad_shader_;
     };
 
