@@ -186,7 +186,7 @@ namespace lfs::rendering {
         }
         interleaved_cache_.slice(1, 0, 3).copy_(positions);
         interleaved_cache_.slice(1, 3, 6).copy_(colors);
-        if (transform_indices && transform_indices->numel() > 0) {
+        if (transform_indices && transform_indices->size(0) == static_cast<int64_t>(num_points)) {
             interleaved_cache_.slice(1, 6, 7).copy_(transform_indices->unsqueeze(1));
         } else {
             interleaved_cache_.slice(1, 6, 7).fill_(0.0f);
