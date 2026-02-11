@@ -203,30 +203,31 @@ namespace lfs::python {
         if (m_venv_ready && std::filesystem::exists(venv_python()))
             return true;
 
-        const auto uv = uv_path();
-        if (uv.empty()) {
-            LOG_ERROR("uv not found");
-            return false;
-        }
-
         if (std::filesystem::exists(venv_python())) {
             m_venv_ready = true;
             return true;
         }
 
-        LOG_INFO("Creating venv at {}", m_venv_dir.string());
+        const auto embedded_python = lfs::core::getEmbeddedPython();
+        if (embedded_python.empty()) {
+            LOG_ERROR("Embedded Python not found (exe_dir={})", lfs::core::getExecutableDir().string());
+            return false;
+        }
+
+        LOG_INFO("Creating venv at {} with {}", m_venv_dir.string(), embedded_python.string());
+
+        const auto python_home = lfs::core::getPythonHome();
 
         std::ostringstream cmd;
-        cmd << "\"" << uv.string() << "\" venv \"" << m_venv_dir.string() << "\" --allow-existing";
-
-        const auto embedded_python = lfs::core::getEmbeddedPython();
-        if (!embedded_python.empty()) {
-            cmd << " --python \"" << embedded_python.string() << "\"";
-            LOG_INFO("Using embedded Python for venv: {}", embedded_python.string());
-        } else {
-            LOG_WARN("Embedded Python not found (exe_dir={}), uv will use system Python",
-                     lfs::core::getExecutableDir().string());
-        }
+#ifdef _WIN32
+        if (!python_home.empty())
+            cmd << "set PYTHONHOME=" << python_home.string() << "&& ";
+        cmd << "\"" << embedded_python.string() << "\" -m venv --without-pip \"" << m_venv_dir.string() << "\"";
+#else
+        if (!python_home.empty())
+            cmd << "PYTHONHOME=\"" << python_home.string() << "\" ";
+        cmd << "\"" << embedded_python.string() << "\" -m venv --without-pip \"" << m_venv_dir.string() << "\"";
+#endif
 
         LOG_INFO("Executing: {}", cmd.str());
         const auto [exit_code, output] = execute_command(cmd.str());
