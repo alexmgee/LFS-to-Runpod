@@ -316,9 +316,19 @@ namespace lfs::vis {
 
     // Core handlers
     void InputController::handleMouseButton(int button, int action, double x, double y) {
+        auto* gui = services().guiOrNull();
+
+        // Consume all mouse events while pie menu is open
+        if (gui && gui->gizmo().isPieMenuOpen()) {
+            if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
+                gui->gizmo().onPieMenuClick({static_cast<float>(x), static_cast<float>(y)});
+            }
+            return;
+        }
+
         // Forward to GUI for mouse capture (rebinding)
-        if (action == GLFW_PRESS && services().guiOrNull() && services().guiOrNull()->isCapturingInput()) {
-            services().guiOrNull()->captureMouseButton(button, getModifierKeys());
+        if (action == GLFW_PRESS && gui && gui->isCapturingInput()) {
+            gui->captureMouseButton(button, getModifierKeys());
             return;
         }
 
@@ -380,8 +390,8 @@ namespace lfs::vis {
         }
 
         const bool over_gui = ImGui::GetIO().WantCaptureMouse ||
-                              (services().guiOrNull() && services().guiOrNull()->panelLayout().isResizingPanel());
-        const bool over_gizmo = services().guiOrNull() && services().guiOrNull()->gizmo().isPositionInViewportGizmo(x, y);
+                              (gui && gui->panelLayout().isResizingPanel());
+        const bool over_gizmo = gui && gui->gizmo().isPositionInViewportGizmo(x, y);
 
         // Single binding lookup with current tool mode
         const int mods = getModifierKeys();
@@ -645,6 +655,15 @@ namespace lfs::vis {
     }
 
     void InputController::handleMouseMove(double x, double y) {
+        auto* gui = services().guiOrNull();
+
+        // Forward to pie menu if open — consume event to prevent viewport interaction
+        if (gui && gui->gizmo().isPieMenuOpen()) {
+            gui->gizmo().onPieMenuMouseMove({static_cast<float>(x), static_cast<float>(y)});
+            last_mouse_pos_ = {x, y};
+            return;
+        }
+
         // Track if we moved significantly
         glm::dvec2 current_pos{x, y};
         const double delta_x = x - last_mouse_pos_.x;
@@ -878,10 +897,27 @@ namespace lfs::vis {
             return;
         }
 
+        auto* gui = services().guiOrNull();
+
         // Forward to GUI for key capture (rebinding)
-        if (action == GLFW_PRESS && services().guiOrNull() && services().guiOrNull()->isCapturingInput()) {
-            services().guiOrNull()->captureKey(key, mods);
+        if (action == GLFW_PRESS && gui && gui->isCapturingInput()) {
+            gui->captureKey(key, mods);
             return;
+        }
+
+        // Handle pie menu key release and escape
+        if (gui && gui->gizmo().isPieMenuOpen()) {
+            if (action == GLFW_RELEASE) {
+                const auto pie_key = bindings_.getKeyForAction(input::Action::PIE_MENU, getCurrentToolMode());
+                if (pie_key >= 0 && key == pie_key) {
+                    gui->gizmo().onPieMenuKeyRelease();
+                    return;
+                }
+            }
+            if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
+                gui->gizmo().closePieMenu();
+                return;
+            }
         }
 
         const bool wants_text_input = ImGui::GetIO().WantTextInput;
@@ -950,8 +986,7 @@ namespace lfs::vis {
                 return;
 
             case input::Action::CYCLE_SELECTION_VIS:
-                if (services().guiOrNull() &&
-                    services().guiOrNull()->gizmo().getCurrentToolMode() == ToolType::Selection) {
+                if (gui && gui->gizmo().getCurrentToolMode() == ToolType::Selection) {
                     cmd::CycleSelectionVisualization{}.emit();
                 }
                 return;
@@ -1041,32 +1076,32 @@ namespace lfs::vis {
                 return;
 
             case input::Action::SELECT_MODE_CENTERS:
-                if (services().guiOrNull()) {
-                    services().guiOrNull()->gizmo().setSelectionSubMode(SelectionSubMode::Centers);
+                if (gui) {
+                    gui->gizmo().setSelectionSubMode(SelectionSubMode::Centers);
                 }
                 return;
 
             case input::Action::SELECT_MODE_RECTANGLE:
-                if (services().guiOrNull()) {
-                    services().guiOrNull()->gizmo().setSelectionSubMode(SelectionSubMode::Rectangle);
+                if (gui) {
+                    gui->gizmo().setSelectionSubMode(SelectionSubMode::Rectangle);
                 }
                 return;
 
             case input::Action::SELECT_MODE_POLYGON:
-                if (services().guiOrNull()) {
-                    services().guiOrNull()->gizmo().setSelectionSubMode(SelectionSubMode::Polygon);
+                if (gui) {
+                    gui->gizmo().setSelectionSubMode(SelectionSubMode::Polygon);
                 }
                 return;
 
             case input::Action::SELECT_MODE_LASSO:
-                if (services().guiOrNull()) {
-                    services().guiOrNull()->gizmo().setSelectionSubMode(SelectionSubMode::Lasso);
+                if (gui) {
+                    gui->gizmo().setSelectionSubMode(SelectionSubMode::Lasso);
                 }
                 return;
 
             case input::Action::SELECT_MODE_RINGS:
-                if (services().guiOrNull()) {
-                    services().guiOrNull()->gizmo().setSelectionSubMode(SelectionSubMode::Rings);
+                if (gui) {
+                    gui->gizmo().setSelectionSubMode(SelectionSubMode::Rings);
                 }
                 return;
 
@@ -1116,6 +1151,14 @@ namespace lfs::vis {
 
             case input::Action::TOOL_ALIGN:
                 lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(ToolType::Align)}.emit();
+                return;
+
+            case input::Action::PIE_MENU:
+                if (gui) {
+                    double px, py;
+                    glfwGetCursorPos(window_, &px, &py);
+                    gui->gizmo().openPieMenu({static_cast<float>(px), static_cast<float>(py)});
+                }
                 return;
 
             default:

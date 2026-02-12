@@ -89,16 +89,22 @@ namespace lfs::vis::gui {
 
             editor.setActiveTool(tool);
 
-            static constexpr std::array<const char*, 8> TOOL_IDS = {
-                nullptr, "builtin.select", "builtin.translate", "builtin.rotate",
-                "builtin.scale", "builtin.brush", "builtin.align", "builtin.mirror"};
             auto& registry = UnifiedToolRegistry::instance();
-            const auto idx = static_cast<size_t>(tool);
-            if (idx < TOOL_IDS.size() && TOOL_IDS[idx]) {
-                registry.setActiveTool(TOOL_IDS[idx]);
-            } else {
-                registry.clearActiveTool();
+            const char* tool_id = nullptr;
+            switch (tool) {
+            case ToolType::None: break;
+            case ToolType::Selection: tool_id = "builtin.select"; break;
+            case ToolType::Translate: tool_id = "builtin.translate"; break;
+            case ToolType::Rotate: tool_id = "builtin.rotate"; break;
+            case ToolType::Scale: tool_id = "builtin.scale"; break;
+            case ToolType::Mirror: tool_id = "builtin.mirror"; break;
+            case ToolType::Brush: tool_id = "builtin.brush"; break;
+            case ToolType::Align: tool_id = "builtin.align"; break;
             }
+            if (tool_id)
+                registry.setActiveTool(tool_id);
+            else
+                registry.clearActiveTool();
 
             switch (tool) {
             case ToolType::Translate:
@@ -1355,6 +1361,157 @@ namespace lfs::vis::gui {
 
     ToolType GizmoManager::getCurrentToolMode() const {
         return viewer_->getEditorContext().getActiveTool();
+    }
+
+    void GizmoManager::openPieMenu(ImVec2 cursor_pos) {
+        pie_menu_.updateItems(viewer_->getEditorContext());
+        pie_menu_.open(cursor_pos);
+    }
+
+    void GizmoManager::closePieMenu() {
+        pie_menu_.close();
+    }
+
+    void GizmoManager::onPieMenuKeyRelease() {
+        pie_menu_.onKeyRelease();
+        handlePieMenuSelection();
+    }
+
+    void GizmoManager::onPieMenuMouseMove(ImVec2 pos) {
+        pie_menu_.onMouseMove(pos);
+    }
+
+    void GizmoManager::onPieMenuClick(ImVec2 pos) {
+        pie_menu_.onMouseClick(pos);
+        handlePieMenuSelection();
+    }
+
+    void GizmoManager::renderPieMenu() {
+        if (!pie_menu_.isOpen())
+            return;
+
+        auto* drawlist = ImGui::GetForegroundDrawList();
+        pie_menu_.draw(drawlist);
+    }
+
+    void GizmoManager::handlePieMenuSelection() {
+        if (!pie_menu_.hasSelection())
+            return;
+
+        const auto& tool_id = pie_menu_.getSelectedId();
+
+        if (!tool_id.empty()) {
+            if (tool_id == "builtin.cropbox" || tool_id == "builtin.ellipsoid") {
+                addCropObject(tool_id == "builtin.cropbox");
+            } else if (tool_id.starts_with("crop.")) {
+                handleCropAction(tool_id);
+            } else {
+                const auto tool_type = pie_menu_.getSelectedToolType();
+                if (tool_type != ToolType::None) {
+                    lfs::core::events::tools::SetToolbarTool{.tool_mode = static_cast<int>(tool_type)}.emit();
+
+                    const auto& submode_id = pie_menu_.getSelectedSubmodeId();
+                    if (!submode_id.empty()) {
+                        if (tool_type == ToolType::Selection) {
+                            static const std::pair<const char*, SelectionSubMode> SUBMODE_MAP[] = {
+                                {"centers", SelectionSubMode::Centers},
+                                {"rectangle", SelectionSubMode::Rectangle},
+                                {"polygon", SelectionSubMode::Polygon},
+                                {"lasso", SelectionSubMode::Lasso},
+                                {"rings", SelectionSubMode::Rings},
+                            };
+                            for (const auto& [sm_id, sm_mode] : SUBMODE_MAP) {
+                                if (submode_id == sm_id) {
+                                    lfs::core::events::tools::SetSelectionSubMode{
+                                        .selection_mode = static_cast<int>(sm_mode)}
+                                        .emit();
+                                    break;
+                                }
+                            }
+                        } else if (tool_type == ToolType::Mirror) {
+                            int axis = 0;
+                            if (submode_id == "y")
+                                axis = 1;
+                            else if (submode_id == "z")
+                                axis = 2;
+                            lfs::core::events::tools::ExecuteMirror{.axis = axis}.emit();
+                        }
+                    }
+                }
+            }
+        }
+
+        pie_menu_.close();
+    }
+
+    void GizmoManager::addCropObject(bool is_cropbox) {
+        auto* sm = viewer_->getSceneManager();
+        if (!sm)
+            return;
+
+        const auto selected = sm->getSelectedNodeNames();
+        for (const auto& name : selected) {
+            const auto* node = sm->getScene().getNode(name);
+            if (!node || node->type != core::NodeType::SPLAT)
+                continue;
+
+            if (is_cropbox)
+                lfs::core::events::cmd::AddCropBox{.node_name = name}.emit();
+            else
+                lfs::core::events::cmd::AddCropEllipsoid{.node_name = name}.emit();
+
+            sm->syncCropBoxToRenderSettings();
+            current_operation_ = ImGuizmo::TRANSLATE;
+            return;
+        }
+    }
+
+    void GizmoManager::handleCropAction(const std::string& action_id) {
+        using namespace lfs::core::events;
+
+        auto* sm = viewer_->getSceneManager();
+        const bool is_cropbox = sm && sm->getSelectedNodeType() == core::NodeType::CROPBOX;
+
+        if (action_id == "crop.translate") {
+            current_operation_ = ImGuizmo::TRANSLATE;
+        } else if (action_id == "crop.rotate") {
+            current_operation_ = ImGuizmo::ROTATE;
+        } else if (action_id == "crop.scale") {
+            current_operation_ = ImGuizmo::SCALE;
+        } else if (action_id == "crop.apply") {
+            if (is_cropbox)
+                cmd::ApplyCropBox{}.emit();
+            else
+                cmd::ApplyEllipsoid{}.emit();
+        } else if (action_id == "crop.fit") {
+            if (is_cropbox)
+                cmd::FitCropBoxToScene{.use_percentile = false}.emit();
+            else
+                cmd::FitEllipsoidToScene{.use_percentile = false}.emit();
+        } else if (action_id == "crop.fit_trim") {
+            if (is_cropbox)
+                cmd::FitCropBoxToScene{.use_percentile = true}.emit();
+            else
+                cmd::FitEllipsoidToScene{.use_percentile = true}.emit();
+        } else if (action_id == "crop.invert") {
+            cmd::ToggleCropInverse{}.emit();
+        } else if (action_id == "crop.reset") {
+            if (is_cropbox)
+                cmd::ResetCropBox{}.emit();
+            else
+                cmd::ResetEllipsoid{}.emit();
+        } else if (action_id == "crop.delete") {
+            if (!sm)
+                return;
+            const core::NodeId id = is_cropbox ? sm->getSelectedNodeCropBoxId()
+                                               : sm->getSelectedNodeEllipsoidId();
+            if (id == core::NULL_NODE)
+                return;
+            const auto* node = sm->getScene().getNodeById(id);
+            if (!node)
+                return;
+            cmd::RemovePLY{.name = node->name}.emit();
+        }
     }
 
 } // namespace lfs::vis::gui
