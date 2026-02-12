@@ -2,8 +2,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "sequencer_panel.hpp"
+#include "core/event_bridge/localization_manager.hpp"
 #include "core/events.hpp"
 #include "core/services.hpp"
+#include "gui/string_keys.hpp"
+#include "rendering/render_constants.hpp"
 #include "theme/theme.hpp"
 #include <algorithm>
 #include <cmath>
@@ -99,6 +102,7 @@ namespace lfs::vis {
         renderTimeline(timeline_pos, timeline_width, content_height);
         renderTimeDisplay(time_display_pos, content_height);
         renderTimeEditPopup();
+        renderFocalLengthEditPopup();
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -460,6 +464,11 @@ namespace lfs::vis {
                     editing_keyframe_index_ = idx;
                     std::snprintf(time_edit_buffer_, sizeof(time_edit_buffer_), "%.2f", keyframes[idx].time);
                 }
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::Sequencer::EDIT_FOCAL_LENGTH), nullptr)) {
+                    editing_focal_length_ = true;
+                    editing_focal_index_ = idx;
+                    std::snprintf(focal_edit_buffer_, sizeof(focal_edit_buffer_), "%.1f", keyframes[idx].focal_length_mm);
+                }
 
                 // Easing submenu (only for non-last keyframes - easing controls outgoing segment)
                 const bool is_last = (idx == keyframes.size() - 1);
@@ -539,6 +548,59 @@ namespace lfs::vis {
             ImGui::SameLine();
             if (ImGui::Button("Cancel", {60, 0})) {
                 editing_keyframe_time_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    void SequencerPanel::openFocalLengthEdit(const size_t index, const float current_focal_mm) {
+        editing_focal_length_ = true;
+        editing_focal_index_ = index;
+        std::snprintf(focal_edit_buffer_, sizeof(focal_edit_buffer_), "%.1f", current_focal_mm);
+    }
+
+    void SequencerPanel::renderFocalLengthEditPopup() {
+        if (!editing_focal_length_)
+            return;
+
+        if (!ImGui::IsPopupOpen("EditKeyframeFocalLength")) {
+            ImGui::OpenPopup("EditKeyframeFocalLength");
+        }
+
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
+        if (ImGui::BeginPopupModal("EditKeyframeFocalLength", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted(LOC(lichtfeld::Strings::Sequencer::EDIT_FOCAL_LENGTH_TITLE));
+            ImGui::Separator();
+            auto applyFocalChange = [this]() {
+                float new_focal = std::strtof(focal_edit_buffer_, nullptr);
+                new_focal = std::clamp(new_focal,
+                                       lfs::rendering::MIN_FOCAL_LENGTH_MM,
+                                       lfs::rendering::MAX_FOCAL_LENGTH_MM);
+                if (editing_focal_index_ < controller_.timeline().keyframes().size()) {
+                    controller_.timeline().setKeyframeFocalLength(editing_focal_index_, new_focal);
+                    controller_.updateLoopKeyframe();
+                }
+            };
+
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputText(LOC(lichtfeld::Strings::Sequencer::FOCAL_LENGTH_MM), focal_edit_buffer_, sizeof(focal_edit_buffer_),
+                                 ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue)) {
+                applyFocalChange();
+                editing_focal_length_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (ImGui::Button(LOC(lichtfeld::Strings::Common::OK), {60, 0})) {
+                applyFocalChange();
+                editing_focal_length_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button(LOC(lichtfeld::Strings::Common::CANCEL), {60, 0})) {
+                editing_focal_length_ = false;
                 ImGui::CloseCurrentPopup();
             }
 
