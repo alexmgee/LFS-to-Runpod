@@ -45,7 +45,7 @@ namespace lfs::rendering {
         GutRenderMode render_mode,
         float scaling_modifier,
         const float* model_transforms, // [num_transforms, 4, 4] row-major optional
-        const int* transform_indices,     // [N] optional
+        const int* transform_indices,  // [N] optional
         int num_transforms,
         const bool* node_visibility_mask, // optional
         int num_visibility_nodes,
