@@ -14,9 +14,15 @@
 #include "gui/string_keys.hpp"
 #include "internal/resource_paths.hpp"
 #include "theme/theme.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <imgui.h>
+#ifdef _WIN32
+#include <shellapi.h>
+#include <windows.h>
+#endif
 
 namespace lfs::vis::gui {
 
@@ -44,6 +50,9 @@ namespace lfs::vis::gui {
         load(lfs::vis::getAssetPath("lichtfeld-splash-logo-dark.png"), logo_dark_texture_, logo_width_, logo_height_);
         load(lfs::vis::getAssetPath("core11-logo.png"), core11_light_texture_, core11_width_, core11_height_);
         load(lfs::vis::getAssetPath("core11-logo-dark.png"), core11_dark_texture_, core11_width_, core11_height_);
+        load(lfs::vis::getAssetPath("icon/discord.png"), discord_icon_texture_, discord_icon_width_, discord_icon_height_);
+        load(lfs::vis::getAssetPath("icon/x-twitter.png"), x_icon_texture_, x_icon_width_, x_icon_height_);
+        load(lfs::vis::getAssetPath("icon/heart.png"), heart_icon_texture_, heart_icon_width_, heart_icon_height_);
     }
 
     void StartupOverlay::destroyTextures() {
@@ -51,6 +60,18 @@ namespace lfs::vis::gui {
         logo_dark_texture_ = {};
         core11_light_texture_ = {};
         core11_dark_texture_ = {};
+        discord_icon_texture_ = {};
+        x_icon_texture_ = {};
+        heart_icon_texture_ = {};
+    }
+
+    void StartupOverlay::openURL(const char* url) {
+#ifdef _WIN32
+        ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
+#else
+        std::string cmd = "xdg-open \"" + std::string(url) + "\" &";
+        std::system(cmd.c_str());
+#endif
     }
 
     void StartupOverlay::render(const ViewportLayout& viewport, ImFont* font_small, bool drag_hovering) {
@@ -68,8 +89,12 @@ namespace lfs::vis::gui {
         static constexpr float PADDING_Y = 28.0f;
         static constexpr float GAP_LOGO_TEXT = 20.0f;
         static constexpr float GAP_TEXT_CORE11 = 10.0f;
-        static constexpr float GAP_CORE11_HINT = 16.0f;
+        static constexpr float GAP_CORE11_SOCIAL = 16.0f;
+        static constexpr float GAP_SOCIAL_LANG = 14.0f;
         static constexpr float GAP_LANG_HINT = 12.0f;
+        static constexpr float SOCIAL_ICON_SIZE = 20.0f;
+        static constexpr float SOCIAL_ICON_TEXT_GAP = 6.0f;
+        static constexpr float SOCIAL_ITEM_GAP = 24.0f;
         static constexpr float LANG_COMBO_WIDTH = 140.0f;
 
         const auto& t = theme();
@@ -92,10 +117,33 @@ namespace lfs::vis::gui {
         if (font_small)
             ImGui::PopFont();
 
+        const char* discord_label = "Discord";
+        const char* x_label = "@janusch_patas";
+        const char* donate_label = "Donate";
+        if (font_small)
+            ImGui::PushFont(font_small);
+        const ImVec2 discord_label_size = ImGui::CalcTextSize(discord_label);
+        const ImVec2 x_label_size = ImGui::CalcTextSize(x_label);
+        const ImVec2 donate_label_size = ImGui::CalcTextSize(donate_label);
+        if (font_small)
+            ImGui::PopFont();
+        const float social_row_width = SOCIAL_ICON_SIZE + SOCIAL_ICON_TEXT_GAP + discord_label_size.x +
+                                       SOCIAL_ITEM_GAP +
+                                       SOCIAL_ICON_SIZE + SOCIAL_ICON_TEXT_GAP + x_label_size.x +
+                                       SOCIAL_ITEM_GAP +
+                                       SOCIAL_ICON_SIZE + SOCIAL_ICON_TEXT_GAP + donate_label_size.x;
+        const float social_row_height = std::max(SOCIAL_ICON_SIZE, discord_label_size.y);
+
+        if (font_small)
+            ImGui::PushFont(font_small);
         const float lang_row_height = ImGui::GetFrameHeight() + 4.0f;
-        const float content_width = std::max({main_logo_w, core11_w, supported_size.x, hint_size.x, LANG_COMBO_WIDTH + lang_label_size.x + 8.0f});
+        if (font_small)
+            ImGui::PopFont();
+        const float content_width = std::max({main_logo_w, core11_w, supported_size.x, hint_size.x,
+                                              LANG_COMBO_WIDTH + lang_label_size.x + 8.0f, social_row_width});
         const float content_height = main_logo_h + GAP_LOGO_TEXT + supported_size.y + GAP_TEXT_CORE11 +
-                                     core11_h + GAP_CORE11_HINT + lang_row_height + GAP_LANG_HINT + hint_size.y;
+                                     core11_h + GAP_CORE11_SOCIAL + social_row_height + GAP_SOCIAL_LANG +
+                                     lang_row_height + GAP_LANG_HINT + hint_size.y;
         const float overlay_width = content_width + PADDING_X * 2.0f;
         const float overlay_height = content_height + PADDING_Y * 2.0f;
 
@@ -149,14 +197,101 @@ namespace lfs::vis::gui {
                 const float x = window_center_x - core11_w * 0.5f;
                 draw_list->AddImage(static_cast<ImTextureID>(core11_texture),
                                     {x, y}, {x + core11_w, y + core11_h});
-                y += core11_h + GAP_CORE11_HINT;
+                y += core11_h + GAP_CORE11_SOCIAL;
+            }
+
+            {
+                const float social_x = window_center_x - social_row_width * 0.5f;
+                const float text_y = y + (SOCIAL_ICON_SIZE - discord_label_size.y) * 0.5f;
+                float sx = social_x;
+
+                const ImVec4 tint_vec = t.palette.text_dim;
+                const auto tint = toU32WithAlpha(tint_vec, 0.85f);
+
+                const float discord_icon_w = discord_icon_height_ > 0
+                                                 ? SOCIAL_ICON_SIZE * static_cast<float>(discord_icon_width_) / static_cast<float>(discord_icon_height_)
+                                                 : SOCIAL_ICON_SIZE;
+                if (discord_icon_texture_.get()) {
+                    draw_list->AddImage(static_cast<ImTextureID>(discord_icon_texture_.get()),
+                                        {sx, y}, {sx + discord_icon_w, y + SOCIAL_ICON_SIZE},
+                                        {0, 0}, {1, 1}, toU32WithAlpha(tint_vec, 0.85f));
+                }
+                sx += discord_icon_w + SOCIAL_ICON_TEXT_GAP;
+                draw_list->AddText({sx, text_y}, tint, discord_label);
+                sx += discord_label_size.x;
+
+                const float discord_hit_w = sx - social_x;
+                ImGui::SetCursorScreenPos({social_x, y});
+                if (ImGui::InvisibleButton("##discord_link", {discord_hit_w, SOCIAL_ICON_SIZE})) {
+                    openURL("https://discord.gg/NqwTqVYVmj");
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    draw_list->AddLine({social_x + discord_icon_w + SOCIAL_ICON_TEXT_GAP, text_y + discord_label_size.y},
+                                       {sx, text_y + discord_label_size.y},
+                                       toU32WithAlpha(tint_vec, 0.6f));
+                }
+
+                sx += SOCIAL_ITEM_GAP;
+                const float x_start = sx;
+
+                const float x_icon_w = x_icon_height_ > 0
+                                           ? SOCIAL_ICON_SIZE * static_cast<float>(x_icon_width_) / static_cast<float>(x_icon_height_)
+                                           : SOCIAL_ICON_SIZE;
+                if (x_icon_texture_.get()) {
+                    draw_list->AddImage(static_cast<ImTextureID>(x_icon_texture_.get()),
+                                        {sx, y}, {sx + x_icon_w, y + SOCIAL_ICON_SIZE},
+                                        {0, 0}, {1, 1}, toU32WithAlpha(tint_vec, 0.85f));
+                }
+                sx += x_icon_w + SOCIAL_ICON_TEXT_GAP;
+                draw_list->AddText({sx, text_y}, tint, x_label);
+                sx += x_label_size.x;
+
+                const float x_hit_w = sx - x_start;
+                ImGui::SetCursorScreenPos({x_start, y});
+                if (ImGui::InvisibleButton("##x_link", {x_hit_w, SOCIAL_ICON_SIZE})) {
+                    openURL("https://x.com/janusch_patas");
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    draw_list->AddLine({x_start + x_icon_w + SOCIAL_ICON_TEXT_GAP, text_y + x_label_size.y},
+                                       {sx, text_y + x_label_size.y},
+                                       toU32WithAlpha(tint_vec, 0.6f));
+                }
+
+                sx += SOCIAL_ITEM_GAP;
+                const float donate_start = sx;
+
+                if (heart_icon_texture_.get()) {
+                    draw_list->AddImage(static_cast<ImTextureID>(heart_icon_texture_.get()),
+                                        {sx, y}, {sx + SOCIAL_ICON_SIZE, y + SOCIAL_ICON_SIZE},
+                                        {0, 0}, {1, 1}, IM_COL32(220, 50, 50, 230));
+                }
+
+                sx += SOCIAL_ICON_SIZE + SOCIAL_ICON_TEXT_GAP;
+                draw_list->AddText({sx, text_y}, tint, donate_label);
+                sx += donate_label_size.x;
+
+                const float donate_hit_w = sx - donate_start;
+                ImGui::SetCursorScreenPos({donate_start, y});
+                if (ImGui::InvisibleButton("##donate_link", {donate_hit_w, SOCIAL_ICON_SIZE})) {
+                    openURL("https://lichtfeld.io/#support-the-project");
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    draw_list->AddLine({donate_start + SOCIAL_ICON_SIZE + SOCIAL_ICON_TEXT_GAP, text_y + donate_label_size.y},
+                                       {sx, text_y + donate_label_size.y},
+                                       toU32WithAlpha(tint_vec, 0.6f));
+                }
+
+                y += social_row_height + GAP_SOCIAL_LANG;
             }
 
             const float lang_total_width = lang_label_size.x + 8.0f + LANG_COMBO_WIDTH;
             const float content_area_width = overlay_width - 2.0f * PADDING_X;
             const float lang_indent = (content_area_width - lang_total_width) * 0.5f;
             ImGui::SetCursorPosY(y - window_pos.y);
-            ImGui::SetCursorPosX(lang_indent);
+            ImGui::SetCursorPosX(PADDING_X + lang_indent);
             ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::Preferences::LANGUAGE));
             ImGui::SameLine(0.0f, 8.0f);
             ImGui::SetNextItemWidth(LANG_COMBO_WIDTH);

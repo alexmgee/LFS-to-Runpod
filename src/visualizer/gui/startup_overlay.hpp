@@ -19,6 +19,8 @@ namespace lfs::vis::gui {
         void dismiss() { visible_ = false; }
         [[nodiscard]] bool isVisible() const { return visible_; }
 
+        static void openURL(const char* url);
+
     private:
         bool visible_ = true;
 
@@ -26,8 +28,14 @@ namespace lfs::vis::gui {
         rendering::Texture logo_dark_texture_;
         rendering::Texture core11_light_texture_;
         rendering::Texture core11_dark_texture_;
+        rendering::Texture discord_icon_texture_;
+        rendering::Texture x_icon_texture_;
+        rendering::Texture heart_icon_texture_;
         int logo_width_ = 0, logo_height_ = 0;
         int core11_width_ = 0, core11_height_ = 0;
+        int discord_icon_width_ = 0, discord_icon_height_ = 0;
+        int x_icon_width_ = 0, x_icon_height_ = 0;
+        int heart_icon_width_ = 0, heart_icon_height_ = 0;
     };
 
 } // namespace lfs::vis::gui
