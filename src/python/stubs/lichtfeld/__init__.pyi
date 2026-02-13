@@ -1429,6 +1429,9 @@ class OptimizationParams:
     def apply_step_scaling(self, new_scaler: float) -> None:
         """Set steps_scaler and scale all step-related parameters by the ratio"""
 
+    def auto_scale_steps(self, image_count: int) -> None:
+        """Auto-scale steps for both strategies based on image count"""
+
     @property
     def gut(self) -> bool:
         """Enable Gaussian Unscented Transform"""

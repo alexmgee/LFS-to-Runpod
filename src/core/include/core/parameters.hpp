@@ -128,6 +128,7 @@ namespace lfs::core {
 
             std::string config_file = "";
 
+            void scale_steps(float ratio);
             void apply_step_scaling();
             void remove_step_scaling();
 

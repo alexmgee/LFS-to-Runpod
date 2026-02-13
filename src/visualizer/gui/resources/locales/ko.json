@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "최대 가우시안 수",
     "tooltip.sh_degree": "구면 조화 차수 (0-3)",
     "tooltip.tile_mode": "큰 이미지용 타일 렌더링",
-    "tooltip.steps_scaler": "정제 단계 간격 스케일",
+    "tooltip.steps_scaler": "훈련 단계 스케일. 이미지 수에서 자동 계산 (300장 이하 1.0, 초과 시 이미지수/300)",
     "tooltip.bilateral_grid": "노출/색상 보정용 외관 임베딩",
     "tooltip.sparsity": "모델 압축을 위한 가지치기 활성화",
     "tooltip.gut": "왜곡 카메라 통합 처리",

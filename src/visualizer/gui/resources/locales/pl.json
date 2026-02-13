@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "Maksymalna liczba Gaussowskich",
     "tooltip.sh_degree": "Stopień harmonik sferycznych (0-3)",
     "tooltip.tile_mode": "Kafelkowe renderowanie dla dużych obrazów",
-    "tooltip.steps_scaler": "Skaluj interwały udoskonalania",
+    "tooltip.steps_scaler": "Skaluj kroki treningowe. Automatycznie obliczane z liczby obrazów (1.0 dla <=300, obrazy/300 dla więcej)",
     "tooltip.bilateral_grid": "Osadzenie wyglądu dla korekcji ekspozycji/koloru",
     "tooltip.sparsity": "Włącz przycinanie dla kompresji modelu",
     "tooltip.gut": "Jednolite traktowanie zniekształconych kamer",

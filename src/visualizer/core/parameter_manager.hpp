@@ -43,6 +43,8 @@ namespace lfs::vis {
         [[nodiscard]] lfs::core::param::OptimizationParameters& getActiveParams();
         [[nodiscard]] const lfs::core::param::OptimizationParameters& getActiveParams() const;
 
+        void autoScaleSteps(size_t image_count);
+
         [[nodiscard]] lfs::core::param::TrainingParameters createForDataset(
             const std::filesystem::path& data_path,
             const std::filesystem::path& output_path) const;

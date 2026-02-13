@@ -5,7 +5,25 @@
 #include "parameter_manager.hpp"
 #include "core/logger.hpp"
 
+#include <cassert>
+#include <cmath>
+
 namespace lfs::vis {
+
+    namespace {
+        constexpr size_t BASE_IMAGE_COUNT = 300;
+
+        void apply_scaler_to_params(lfs::core::param::OptimizationParameters& p, const float new_scaler) {
+            const float prev = p.steps_scaler;
+            p.steps_scaler = new_scaler;
+            if (new_scaler <= 0.0f)
+                return;
+            const float ratio = (prev > 0.0f) ? (new_scaler / prev) : new_scaler;
+            if (std::abs(ratio - 1.0f) < 0.001f)
+                return;
+            p.scale_steps(ratio);
+        }
+    } // namespace
 
     std::expected<void, std::string> ParameterManager::ensureLoaded() {
         if (loaded_)
@@ -116,6 +134,19 @@ namespace lfs::vis {
 
     const lfs::core::param::OptimizationParameters& ParameterManager::getActiveParams() const {
         return getCurrentParams(active_strategy_);
+    }
+
+    void ParameterManager::autoScaleSteps(const size_t image_count) {
+        assert(image_count > 0);
+        const float new_scaler = (image_count <= BASE_IMAGE_COUNT)
+                                     ? 1.0f
+                                     : static_cast<float>(image_count) / static_cast<float>(BASE_IMAGE_COUNT);
+
+        std::lock_guard lock(params_mutex_);
+        apply_scaler_to_params(mcmc_current_, new_scaler);
+        apply_scaler_to_params(adc_current_, new_scaler);
+        dirty_.store(true, std::memory_order_release);
+        LOG_INFO("Auto-scaled steps for {} images: scaler={:.2f}", image_count, new_scaler);
     }
 
     lfs::core::param::TrainingParameters ParameterManager::createForDataset(

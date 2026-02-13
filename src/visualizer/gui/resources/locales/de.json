@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "Maximale Anzahl Gaussians",
     "tooltip.sh_degree": "Spherical Harmonics Grad (0-3)",
     "tooltip.tile_mode": "Gekacheltes Rendering für große Bilder",
-    "tooltip.steps_scaler": "Verfeinerungsschrittintervalle skalieren",
+    "tooltip.steps_scaler": "Trainingsschritte skalieren. Automatisch aus Bildanzahl berechnet (1.0 für <=300 Bilder, Bilder/300 für mehr)",
     "tooltip.bilateral_grid": "Erscheinungsembedding für Belichtungs-/Farbkorrektur",
     "tooltip.sparsity": "Pruning für Modellkompression aktivieren",
     "tooltip.gut": "Einheitliche Behandlung für verzerrte Kameras",

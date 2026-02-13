@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "Numero massimo di Gaussiani",
     "tooltip.sh_degree": "Grado di armoniche sferiche (0-3)",
     "tooltip.tile_mode": "Rendering a piastrelle per immagini grandi",
-    "tooltip.steps_scaler": "Scala intervalli di raffinamento",
+    "tooltip.steps_scaler": "Scala passaggi di addestramento. Auto-calcolato dal numero di immagini (1.0 per <=300, immagini/300 oltre)",
     "tooltip.bilateral_grid": "Embedding di aspetto per correzione esposizione/colore",
     "tooltip.sparsity": "Abilita potatura per compressione modello",
     "tooltip.gut": "Trattamento unificato per fotocamere distorte",

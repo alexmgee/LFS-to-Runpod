@@ -40,52 +40,38 @@ namespace lfs::core {
             }
         } // namespace
 
-        void OptimizationParameters::apply_step_scaling() {
-            if (steps_scaler <= 0.f || steps_scaler == 1.f)
-                return;
-            LOG_INFO("Scaling training steps by factor: {}", steps_scaler);
-            const auto scale = [this](size_t v) {
-                return static_cast<size_t>(std::lround(static_cast<float>(v) * steps_scaler));
+        void OptimizationParameters::scale_steps(const float ratio) {
+            const auto apply = [ratio](const size_t v) {
+                return static_cast<size_t>(std::lround(static_cast<float>(v) * ratio));
             };
-            iterations = scale(iterations);
-            start_refine = scale(start_refine);
-            reset_every = scale(reset_every);
-            stop_refine = scale(stop_refine);
-            refine_every = scale(refine_every);
-            sh_degree_interval = scale(sh_degree_interval);
+            iterations = apply(iterations);
+            start_refine = apply(start_refine);
+            stop_refine = apply(stop_refine);
+            reset_every = apply(reset_every);
+            refine_every = apply(refine_every);
+            sh_degree_interval = apply(sh_degree_interval);
 
             for (auto* steps : {&eval_steps, &save_steps}) {
                 std::set<size_t> unique;
-                for (auto s : *steps) {
-                    size_t scaled = scale(s);
-                    if (scaled > 0)
+                for (const auto s : *steps) {
+                    if (const size_t scaled = apply(s); scaled > 0)
                         unique.insert(scaled);
                 }
                 steps->assign(unique.begin(), unique.end());
             }
         }
 
+        void OptimizationParameters::apply_step_scaling() {
+            if (steps_scaler <= 0.f || steps_scaler == 1.f)
+                return;
+            LOG_INFO("Scaling training steps by factor: {}", steps_scaler);
+            scale_steps(steps_scaler);
+        }
+
         void OptimizationParameters::remove_step_scaling() {
             if (steps_scaler <= 0.f || steps_scaler == 1.f)
                 return;
-            const auto unscale = [this](size_t v) {
-                return static_cast<size_t>(std::lround(static_cast<float>(v) / steps_scaler));
-            };
-            iterations = unscale(iterations);
-            start_refine = unscale(start_refine);
-            reset_every = unscale(reset_every);
-            stop_refine = unscale(stop_refine);
-            refine_every = unscale(refine_every);
-            sh_degree_interval = unscale(sh_degree_interval);
-            for (auto* steps : {&eval_steps, &save_steps}) {
-                std::set<size_t> unique;
-                for (auto s : *steps) {
-                    size_t unscaled = unscale(s);
-                    if (unscaled > 0)
-                        unique.insert(unscaled);
-                }
-                steps->assign(unique.begin(), unique.end());
-            }
+            scale_steps(1.0f / steps_scaler);
         }
 
         nlohmann::json OptimizationParameters::to_json() const {

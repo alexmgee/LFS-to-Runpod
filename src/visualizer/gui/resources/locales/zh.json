@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "最大高斯数量",
     "tooltip.sh_degree": "球谐函数阶数 (0-3)",
     "tooltip.tile_mode": "大图像分块渲染",
-    "tooltip.steps_scaler": "缩放细化步骤间隔",
+    "tooltip.steps_scaler": "缩放训练步数。根据图像数量自动计算（<=300张为1.0，超过则为图像数/300）",
     "tooltip.bilateral_grid": "曝光/颜色校正的外观嵌入",
     "tooltip.sparsity": "启用剪枝进行模型压缩",
     "tooltip.gut": "畸变相机统一处理",

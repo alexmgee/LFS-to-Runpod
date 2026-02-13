@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "Maximum number of Gaussians",
     "tooltip.sh_degree": "Spherical harmonics degree (0-3)",
     "tooltip.tile_mode": "Use tiled rendering for large images",
-    "tooltip.steps_scaler": "Scale refinement step intervals",
+    "tooltip.steps_scaler": "Scale training steps. Auto-set from image count (1.0 for <=300 images, images/300 for more)",
     "tooltip.bilateral_grid": "Appearance embedding for exposure/color correction",
     "tooltip.sparsity": "Enable pruning for model compression",
     "tooltip.gut": "Unified treatment for distorted cameras",

@@ -65,6 +65,7 @@ class TrainingPanel(Panel):
     def __init__(self):
         self._checkpoint_saved_time = 0.0
         self._new_save_step = 7000
+        self._auto_scaled_for_cameras = 0
 
     def _sync_render_setting(self, name, value):
         rs = lf.get_render_settings()
@@ -84,6 +85,9 @@ class TrainingPanel(Panel):
         state = AppState.trainer_state.value
         iteration = AppState.iteration.value
 
+        if state == "ready" and iteration == 0:
+            self._try_auto_scale_steps(params)
+
         self._draw_controls(layout, state, iteration)
         layout.separator()
 
@@ -94,6 +98,16 @@ class TrainingPanel(Panel):
             self._draw_advanced_params(layout, state, iteration, params)
 
         self._draw_status(layout, state, iteration)
+
+    def _try_auto_scale_steps(self, params):
+        scene = lf.get_scene()
+        if scene is None:
+            return
+        camera_count = scene.active_camera_count
+        if camera_count == 0 or camera_count == self._auto_scaled_for_cameras:
+            return
+        self._auto_scaled_for_cameras = camera_count
+        params.auto_scale_steps(camera_count)
 
     def _draw_controls(self, layout, state, iteration):
         if state == "ready":

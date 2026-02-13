@@ -1090,6 +1090,14 @@ namespace lfs::python {
                 },
                 nb::arg("new_scaler"),
                 "Set steps_scaler and scale all step-related parameters by the ratio")
+            .def(
+                "auto_scale_steps",
+                [](PyOptimizationParams&, const size_t image_count) {
+                    if (auto* pm = get_parameter_manager())
+                        pm->autoScaleSteps(image_count);
+                },
+                nb::arg("image_count"),
+                "Auto-scale steps for both strategies based on image count")
             .def_prop_rw(
                 "gut",
                 [](PyOptimizationParams& self) { return self.params().gut; },

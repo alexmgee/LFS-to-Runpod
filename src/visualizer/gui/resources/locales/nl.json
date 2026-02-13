@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "Maximaal aantal Gaussians",
     "tooltip.sh_degree": "Sferische harmonischen graad (0-3)",
     "tooltip.tile_mode": "Getegelde rendering voor grote afbeeldingen",
-    "tooltip.steps_scaler": "Schaal verfijningsintervallen",
+    "tooltip.steps_scaler": "Schaal trainingsstappen. Automatisch berekend uit beeldaantal (1.0 voor <=300, beelden/300 voor meer)",
     "tooltip.bilateral_grid": "Uiterlijk embedding voor belichting/kleurcorrectie",
     "tooltip.sparsity": "Schakel snoeien in voor modelcompressie",
     "tooltip.gut": "Uniforme behandeling voor vervormde camera's",

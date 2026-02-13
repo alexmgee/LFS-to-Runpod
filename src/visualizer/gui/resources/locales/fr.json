@@ -139,7 +139,7 @@
     "tooltip.max_gaussians": "Nombre maximum de Gaussiens",
     "tooltip.sh_degree": "Degré des harmoniques sphériques (0-3)",
     "tooltip.tile_mode": "Rendu par tuiles pour grandes images",
-    "tooltip.steps_scaler": "Échelle des intervalles de raffinement",
+    "tooltip.steps_scaler": "Échelle des étapes d'entraînement. Auto-calculé selon les images (1.0 pour <=300, images/300 au-delà)",
     "tooltip.bilateral_grid": "Embedding d'apparence pour correction exposition/couleur",
     "tooltip.sparsity": "Activer l'élagage pour compression du modèle",
     "tooltip.gut": "Traitement unifié pour caméras déformées",
