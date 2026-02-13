@@ -27,27 +27,131 @@ class PluginInstaller:
 
     def __init__(self, plugin: PluginInstance):
         self.plugin = plugin
+        self._embedded_python_checked = False
+        self._embedded_python_cache: Optional[Path] = None
 
     def _get_embedded_python(self) -> Optional[Path]:
         """Get path to the embedded Python executable."""
+        if self._embedded_python_checked:
+            return self._embedded_python_cache
+
+        result: Optional[Path] = None
         try:
             import lichtfeld
             python_path = lichtfeld.packages.embedded_python_path()
             if python_path:
-                return Path(python_path)
-            logger.info("embedded_python_path() returned empty, falling back to sys.executable: %s",
-                        Path(sys.executable).resolve())
+                python = self._normalize_path(Path(python_path))
+                if python.exists():
+                    result = python
+                else:
+                    logger.warning("embedded_python_path() returned missing path: %s", python)
+            else:
+                logger.info("embedded_python_path() returned empty, falling back to sys.executable: %s",
+                            Path(sys.executable).resolve())
         except (ImportError, AttributeError):
             logger.info("lichtfeld.packages not available, falling back to sys.executable: %s",
                         Path(sys.executable).resolve())
-        return None
+
+        self._embedded_python_cache = result
+        self._embedded_python_checked = True
+        return result
+
+    def _is_portable_bundle(self) -> bool:
+        """Detect portable runtime layout (bin/python.exe + bin/python312._pth)."""
+        embedded = self._get_embedded_python()
+        if not embedded:
+            return False
+        return (embedded.parent / "python312._pth").exists()
 
     @staticmethod
-    def _uv_env() -> dict:
-        """Return env dict with PYTHONHOME stripped so uv isn't confused by embedded Python."""
+    def _uv_env(set_pythonhome: bool = False) -> dict:
+        """Return env dict tailored for uv subprocesses."""
         env = os.environ.copy()
-        env.pop("PYTHONHOME", None)
+        if set_pythonhome:
+            # Some runtimes (embedded/portable Python) need PYTHONHOME for stdlib discovery.
+            env["PYTHONHOME"] = sys.prefix
+        else:
+            env.pop("PYTHONHOME", None)
         return env
+
+    @staticmethod
+    def _normalize_path(path: Path) -> Path:
+        """Return an absolute path when possible."""
+        try:
+            return path.expanduser().resolve(strict=False)
+        except OSError:
+            return Path(os.path.abspath(str(path)))
+
+    def _bundled_uv_candidates(self, portable_bundle: bool) -> list[Path]:
+        """Build uv candidate paths near bundled/runtime locations."""
+        candidates: list[Path] = []
+        seen: set[str] = set()
+
+        def add(path: Path) -> None:
+            key = str(path)
+            if key not in seen:
+                seen.add(key)
+                candidates.append(path)
+
+        # Prefer C++-resolved bundled uv path.
+        try:
+            import lichtfeld
+            uv_path = lichtfeld.packages.uv_path()
+            if uv_path:
+                add(self._normalize_path(Path(uv_path)))
+        except (ImportError, AttributeError):
+            pass
+
+        embedded = self._get_embedded_python()
+        base_dirs: list[Path] = []
+        if embedded:
+            base_dirs.append(embedded.parent)
+
+        # lfs_plugins/installer.py lives in bin/lfs_plugins for portable builds.
+        module_dir = self._normalize_path(Path(__file__)).parent
+        base_dirs.append(module_dir.parent)
+
+        if not portable_bundle:
+            base_dirs.append(self._normalize_path(Path(sys.executable)).parent)
+
+        for base in base_dirs:
+            if os.name == "nt":
+                add(base / "uv.exe")
+            add(base / "uv")
+            if os.name == "nt":
+                add(base / "bin" / "uv.exe")
+            add(base / "bin" / "uv")
+
+        return candidates
+
+    def _venv_creation_attempts(self) -> list[tuple[str, dict, str]]:
+        """Build uv venv attempts from most to least preferred interpreter."""
+        attempts: list[tuple[str, dict, str]] = []
+        seen: set[str] = set()
+
+        def add_attempt(python_arg: str, env: dict, label: str) -> None:
+            if python_arg and python_arg not in seen:
+                seen.add(python_arg)
+                attempts.append((python_arg, env, label))
+
+        embedded = self._get_embedded_python()
+        portable_bundle = self._is_portable_bundle()
+
+        if embedded:
+            add_attempt(str(embedded), self._uv_env(set_pythonhome=True), "embedded")
+
+        # Portable builds must stay fully self-contained: do not fall back to system/managed Python.
+        if portable_bundle and attempts:
+            return attempts
+
+        sys_python = self._normalize_path(Path(sys.executable))
+        # sys.executable can also be an embedded/runtime interpreter that needs PYTHONHOME.
+        add_attempt(str(sys_python), self._uv_env(set_pythonhome=True), "sys.executable")
+
+        version_spec = f"{sys.version_info.major}.{sys.version_info.minor}"
+        add_attempt(version_spec, self._uv_env(set_pythonhome=False), "uv-managed")
+
+        return attempts
 
     def ensure_venv(self) -> bool:
         """Create plugin-specific venv using uv if needed."""
@@ -67,23 +171,43 @@ class PluginInstaller:
         if not uv:
             raise PluginDependencyError("uv not found - cannot create plugin venv")
 
-        python = self._get_embedded_python() or Path(sys.executable)
-        cmd = [str(uv), "venv", str(venv_path), "--python", str(python)]
-        logger.info("Creating venv: %s", " ".join(cmd))
+        failures: list[str] = []
+        portable_bundle = self._is_portable_bundle()
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=self._uv_env(),
-        )
+        for python_arg, env, label in self._venv_creation_attempts():
+            cmd = [str(uv), "venv", str(venv_path), "--python", python_arg]
+            logger.info("Creating venv (%s): %s", label, " ".join(cmd))
 
-        if result.returncode != 0:
-            logger.error("uv venv failed (exit %d): %s", result.returncode, result.stderr)
-            raise PluginDependencyError(f"Failed to create venv: {result.stderr}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
 
-        logger.info("Plugin venv created: %s", venv_path)
-        return True
+            if result.returncode == 0:
+                logger.info("Plugin venv created (%s): %s", label, venv_path)
+                return True
+
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            detail = stderr or stdout or "no error output"
+            logger.warning("uv venv failed using %s (exit %d): %s", label, result.returncode, detail)
+            failures.append(f"[{label}] {detail}")
+
+        if portable_bundle and os.name == "nt":
+            embedded = self._get_embedded_python()
+            if embedded:
+                helper_dir = embedded.parent
+                missing = [name for name in ("pythonw.exe", "venvlauncher.exe", "venvwlauncher.exe")
+                           if not (helper_dir / name).exists()]
+                if missing:
+                    failures.append(
+                        "[hint] Missing bundled Windows Python helpers in "
+                        f"{helper_dir}: {', '.join(missing)}"
+                    )
+
+        raise PluginDependencyError("Failed to create venv:\n" + "\n".join(failures))
 
     DEPS_STAMP = ".deps_installed"
 
@@ -144,7 +268,7 @@ class PluginInstaller:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            env=self._uv_env(),
+            env=self._uv_env(set_pythonhome=False),
         ) as proc:
             if proc.stdout is not None:
                 for line in iter(proc.stdout.readline, ""):
@@ -164,32 +288,19 @@ class PluginInstaller:
 
     def _find_uv(self) -> Optional[Path]:
         """Find uv binary."""
-        result = None
+        portable_bundle = self._is_portable_bundle()
 
-        try:
-            import lichtfeld
-            uv_path = lichtfeld.packages.uv_path()
-            if uv_path:
-                result = Path(uv_path)
-        except (ImportError, AttributeError):
-            pass
+        for candidate in self._bundled_uv_candidates(portable_bundle):
+            if candidate.exists():
+                logger.info("uv resolved (bundled): %s", candidate)
+                return candidate
 
-        if not result:
-            exe_dir = Path(sys.executable).parent
-            bundled_paths = [
-                exe_dir / "bin" / "uv",
-                exe_dir / "uv",
-                exe_dir.parent / "bin" / "uv",
-            ]
-            for p in bundled_paths:
-                if p.exists():
-                    result = p
-                    break
+        if portable_bundle:
+            logger.error("uv not found in portable bundle; refusing system uv fallback")
+            return None
 
-        if not result:
-            uv = shutil.which("uv")
-            result = Path(uv) if uv else None
-
+        uv = shutil.which("uv")
+        result = Path(uv) if uv else None
         logger.info("uv resolved: %s", result)
         return result
 

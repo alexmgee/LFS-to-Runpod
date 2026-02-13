@@ -153,6 +153,62 @@ class TestPluginLoading:
         with pytest.raises(PluginError, match="not found"):
             mgr.load("nonexistent_plugin")
 
+    def test_load_venv_creation_fallback_sequence(self, temp_plugins_dir):
+        """manager.load() should trigger venv creation fallback from sys.executable to uv-managed Python."""
+        from unittest.mock import patch
+        import subprocess as sp
+        from lfs_plugins import PluginManager, PluginState
+
+        plugin_name = "venv_fallback_plugin"
+        plugin_dir = temp_plugins_dir / plugin_name
+        plugin_dir.mkdir()
+        (plugin_dir / "pyproject.toml").write_text(
+            f"""
+[project]
+name = "{plugin_name}"
+version = "1.0.0"
+description = "Plugin for venv fallback integration test"
+dependencies = []
+
+[tool.lichtfeld]
+auto_start = true
+hot_reload = false
+"""
+        )
+        (plugin_dir / "__init__.py").write_text("def on_load():\n    pass\n")
+
+        mock_uv = plugin_dir / "uv"
+        mock_uv.touch()
+
+        fail = sp.CompletedProcess(
+            args=[],
+            returncode=2,
+            stdout="",
+            stderr="Could not find a suitable Python executable",
+        )
+        ok = sp.CompletedProcess(args=[], returncode=0, stdout="ok", stderr="")
+        version_spec = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+        mgr = PluginManager.instance()
+        with patch("lfs_plugins.installer.PluginInstaller._find_uv", return_value=mock_uv), \
+             patch("lfs_plugins.installer.PluginInstaller._get_embedded_python", return_value=None), \
+             patch("lfs_plugins.installer.PluginInstaller.install_dependencies", return_value=True), \
+             patch("lfs_plugins.installer.subprocess.run", side_effect=[fail, ok]) as mock_run:
+            assert mgr.load(plugin_name) is True
+            assert mgr.get_state(plugin_name) == PluginState.ACTIVE
+            assert mock_run.call_count == 2
+
+            expected_prefix = [str(mock_uv), "venv", str(plugin_dir / ".venv"), "--python"]
+            assert mock_run.call_args_list[0][0][0] == expected_prefix + [str(Path(sys.executable).resolve())]
+            assert mock_run.call_args_list[1][0][0] == expected_prefix + [version_spec]
+
+            first_env = mock_run.call_args_list[0][1]["env"]
+            second_env = mock_run.call_args_list[1][1]["env"]
+            assert first_env.get("PYTHONHOME") == sys.prefix
+            assert second_env.get("PYTHONHOME") is None
+
+        mgr.unload(plugin_name)
+
 
 class TestPluginReload:
     """Tests for hot reload."""
@@ -605,14 +661,21 @@ hot_reload = false
 
         assert installer._deps_already_installed() is False
 
-    def test_uv_env_sets_pythonhome(self, installer_plugin):
-        """_uv_env() must set PYTHONHOME to sys.prefix for uv subprocesses."""
+    def test_uv_env_sets_pythonhome_for_embedded(self, installer_plugin):
+        """_uv_env() should set PYTHONHOME when using embedded Python."""
         installer = self._make_installer(installer_plugin)
-        env = installer._uv_env()
+        env = installer._uv_env(set_pythonhome=True)
         assert env["PYTHONHOME"] == sys.prefix
 
-    def test_install_passes_pythonhome_to_subprocess(self, installer_plugin):
-        """install_dependencies() must pass PYTHONHOME in subprocess env."""
+    def test_uv_env_strips_pythonhome_for_uv_managed(self, installer_plugin, monkeypatch):
+        """_uv_env() should strip PYTHONHOME for uv-managed interpreters."""
+        installer = self._make_installer(installer_plugin)
+        monkeypatch.setenv("PYTHONHOME", "/tmp/python-home")
+        env = installer._uv_env(set_pythonhome=False)
+        assert env.get("PYTHONHOME") is None
+
+    def test_install_strips_pythonhome_for_uv_sync(self, installer_plugin):
+        """install_dependencies() should not pass PYTHONHOME to uv sync."""
         from unittest.mock import patch
 
         installer = self._make_installer(installer_plugin)
@@ -624,4 +687,91 @@ hot_reload = false
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
             installer.install_dependencies()
             env = mock_popen.call_args[1].get("env", {})
-            assert env.get("PYTHONHOME") == sys.prefix
+            assert env.get("PYTHONHOME") is None
+
+    def test_ensure_venv_falls_back_to_uv_managed_python(self, installer_plugin):
+        """ensure_venv() should retry with uv-managed Python when sys interpreter is unsuitable."""
+        from unittest.mock import patch
+        import subprocess as sp
+
+        installer = self._make_installer(installer_plugin)
+        venv_python = installer._get_venv_python()
+        if venv_python.exists():
+            venv_python.unlink()
+
+        mock_uv = installer_plugin / "uv"
+        mock_uv.touch()
+
+        fail = sp.CompletedProcess(
+            args=[],
+            returncode=2,
+            stdout="",
+            stderr="Could not find a suitable Python executable",
+        )
+        ok = sp.CompletedProcess(args=[], returncode=0, stdout="ok", stderr="")
+        version_spec = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+        with patch.object(installer, "_find_uv", return_value=mock_uv), \
+             patch.object(installer, "_get_embedded_python", return_value=None), \
+             patch("lfs_plugins.installer.subprocess.run", side_effect=[fail, ok]) as mock_run:
+            assert installer.ensure_venv() is True
+            assert mock_run.call_count == 2
+
+            first_cmd = mock_run.call_args_list[0][0][0]
+            second_cmd = mock_run.call_args_list[1][0][0]
+            assert first_cmd[-2:] == ["--python", str(Path(sys.executable).resolve())]
+            assert second_cmd[-2:] == ["--python", version_spec]
+
+            first_env = mock_run.call_args_list[0][1]["env"]
+            second_env = mock_run.call_args_list[1][1]["env"]
+            assert first_env.get("PYTHONHOME") == sys.prefix
+            assert second_env.get("PYTHONHOME") is None
+
+    def test_find_uv_portable_does_not_fallback_to_system(self, installer_plugin):
+        """Portable runtime must not fall back to system uv."""
+        from unittest.mock import patch
+
+        installer = self._make_installer(installer_plugin)
+
+        with patch.object(installer, "_is_portable_bundle", return_value=True), \
+             patch.object(installer, "_bundled_uv_candidates", return_value=[]), \
+             patch("shutil.which") as mock_which:
+            assert installer._find_uv() is None
+            mock_which.assert_not_called()
+
+    def test_ensure_venv_portable_uses_embedded_only(self, installer_plugin):
+        """Portable runtime should use embedded interpreter only for uv venv."""
+        from unittest.mock import patch
+        import subprocess as sp
+        from lfs_plugins.errors import PluginDependencyError
+
+        installer = self._make_installer(installer_plugin)
+        venv_python = installer._get_venv_python()
+        if venv_python.exists():
+            venv_python.unlink()
+
+        embedded_dir = installer_plugin / "embedded"
+        embedded_dir.mkdir()
+        embedded_python = embedded_dir / "python.exe"
+        embedded_python.touch()
+
+        mock_uv = installer_plugin / "uv"
+        mock_uv.touch()
+
+        fail = sp.CompletedProcess(
+            args=[],
+            returncode=2,
+            stdout="",
+            stderr="Could not find a suitable Python executable",
+        )
+
+        with patch.object(installer, "_find_uv", return_value=mock_uv), \
+             patch.object(installer, "_is_portable_bundle", return_value=True), \
+             patch.object(installer, "_get_embedded_python", return_value=embedded_python), \
+             patch("lfs_plugins.installer.subprocess.run", return_value=fail) as mock_run:
+            with pytest.raises(PluginDependencyError):
+                installer.ensure_venv()
+
+            assert mock_run.call_count == 1
+            cmd = mock_run.call_args_list[0][0][0]
+            assert cmd[-2:] == ["--python", str(embedded_python)]

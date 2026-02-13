@@ -367,6 +367,9 @@ add_dependencies(lfs_py lfs_plugins_copy)
 # UV package manager for Python package installation support
 include(${CMAKE_SOURCE_DIR}/cmake/FetchUV.cmake)
 fetch_uv()
+if(BUILD_PORTABLE AND NOT EXISTS "${UV_BINARY_PATH}")
+    message(FATAL_ERROR "Portable build requires bundled uv, but FetchUV failed (expected ${UV_BINARY_PATH})")
+endif()
 copy_uv_to_build()
 install_uv()
 
@@ -441,6 +444,34 @@ if(BUILD_PORTABLE)
             DESTINATION "${CMAKE_INSTALL_BINDIR}"
             COMPONENT runtime
         )
+
+        # Install helper executables needed by Windows venv tooling.
+        # Without these, uv/python may reject the interpreter for venv creation.
+        set(PYTHON_HELPER_EXES
+            "${VCPKG_PYTHON_TOOLS_DIR}/pythonw.exe"
+            "${VCPKG_PYTHON_TOOLS_DIR}/venvlauncher.exe"
+            "${VCPKG_PYTHON_TOOLS_DIR}/venvwlauncher.exe"
+            "${VCPKG_PYTHON_TOOLS_DIR}/../bin/pythonw.exe"
+            "${VCPKG_PYTHON_TOOLS_DIR}/../bin/venvlauncher.exe"
+            "${VCPKG_PYTHON_TOOLS_DIR}/../bin/venvwlauncher.exe"
+        )
+        set(PYTHON_HELPER_INSTALL_LIST "")
+        foreach(_helper IN LISTS PYTHON_HELPER_EXES)
+            if(EXISTS "${_helper}")
+                list(APPEND PYTHON_HELPER_INSTALL_LIST "${_helper}")
+            endif()
+        endforeach()
+        if(PYTHON_HELPER_INSTALL_LIST)
+            list(REMOVE_DUPLICATES PYTHON_HELPER_INSTALL_LIST)
+            install(PROGRAMS ${PYTHON_HELPER_INSTALL_LIST}
+                DESTINATION "${CMAKE_INSTALL_BINDIR}"
+                COMPONENT runtime
+            )
+            message(STATUS "  Will bundle Python helper exes: ${PYTHON_HELPER_INSTALL_LIST}")
+        else()
+            message(WARNING "Python helper exes not found (pythonw/venvlauncher). "
+                            "Windows portable plugin venv creation may fail.")
+        endif()
 
         # Install python3.dll and python312.dll to bin/ (where exe is)
         file(GLOB PYTHON_DLLS "${VCPKG_PYTHON_TOOLS_DIR}/python*.dll")
