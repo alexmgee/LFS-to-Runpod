@@ -9,9 +9,9 @@ LichtFeld Studio is a C++23/CUDA application — there's no Docker image, so it 
 ### 1. Create a RunPod pod
 
 - **Template:** RunPod PyTorch 2.x (has CUDA pre-installed)
-- **Container disk:** 150 GB
-- **Persistent volume:** 100–300 GB mounted at `/workspace`
-- **Expose TCP port 22** for SSH (don't use the SSH gateway — [it breaks on Windows](RUNPOD_GUIDE.md#ssh-access-use-direct-tcp-not-the-ssh-gateway))
+- **Container disk:** Default (20–50 GB is fine — only holds OS and apt packages)
+- **Persistent volume:** Mounted at `/workspace`. The build takes ~40 GB, then add space for your datasets and outputs. 100 GB for a single scene, 300 GB if you're training multiple large datasets.
+- SSH is enabled by default — use the **direct TCP port** shown in the pod's connection info, not the SSH gateway ([details](RUNPOD_GUIDE.md#ssh-access-use-direct-tcp-not-the-ssh-gateway))
 
 | GPU | VRAM | $/hr | Good for |
 |-----|------|------|----------|

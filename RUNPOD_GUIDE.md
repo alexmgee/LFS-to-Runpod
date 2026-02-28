@@ -59,9 +59,8 @@ Add $3–8 for the initial build (one-time cost, persists on volume). You can al
 1. Go to [runpod.io](https://www.runpod.io) → **GPU Cloud** → **Deploy**
 2. Choose your GPU (see [VRAM Planning](#8-vram-planning--tile-mode) for sizing)
 3. Select template: **RunPod PyTorch 2.x** (comes with CUDA pre-installed)
-4. Set **container disk** to **150 GB** (the build + vcpkg dependencies need space)
-5. Create or attach a **persistent volume** (see below)
-6. **Expose TCP ports**: Add port **22** to exposed TCP ports
+4. **Container disk** can stay at the default — it only holds the OS and apt packages
+5. Create or attach a **persistent volume** (see below) — the build, datasets, and outputs all live here
 
 > **Cost-saving tip:** Create a CPU pod ($0.12/hr) for the initial build and dataset uploads. Then terminate it, and spin up a GPU pod on the same volume for training. The build persists on the volume.
 
@@ -69,8 +68,7 @@ Add $3–8 for the initial build (one-time cost, persists on volume). You can al
 
 The persistent volume mounts at `/workspace` and survives pod termination.
 
-- **Minimum:** 100 GB (build + one dataset)
-- **Recommended:** 300 GB (build + multiple datasets + outputs)
+- **Sizing:** The build takes ~40 GB. Add space for your datasets and outputs. 100 GB works for a single scene, 300 GB if you're training multiple large datasets.
 - **What goes where:**
   - `/workspace/LichtFeld-Studio/` — source code and build (persists)
   - `/workspace/vcpkg/` — package manager and dependencies (persists)
