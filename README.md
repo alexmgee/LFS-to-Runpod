@@ -23,7 +23,7 @@ LichtFeld Studio is a C++23/CUDA application — there's no Docker image, so it 
 
 | File | What it's for |
 |------|--------------|
-| `example_config.json` | Example JSON config for parameters not available as CLI flags — learning rates, checkpoint schedules, eval intervals, etc. Pass to training with `--config example_config.json`. See [RUNPOD_GUIDE.md § JSON Config](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters). |
+| `example_config.json` | Example JSON config for parameters not available as CLI flags — learning rates, checkpoint schedules, etc. Pass to training with `--config example_config.json`. See [RUNPOD_GUIDE.md § JSON Config](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters). |
 | `CLAUDE.md` | If you install [Claude Code](https://claude.ai/code) on the pod, this file gives it context about the training environment so it can help you build commands and debug issues. Not required. |
 
 **Documentation:**
@@ -198,8 +198,7 @@ cd /workspace/runpod
   --max-cap 8000000 \                          # ← max Gaussians (adjust to your GPU's VRAM)
   --ppisp \                                    # ← per-pixel shading (improves appearance)
   --bilateral-grid \                           # ← exposure/white balance compensation
-  --mask-mode ignore \                         # ← exclude masked regions (if masks/ exists)
-  --eval --test-every 8                        # ← hold out every 8th image for evaluation
+  --mask-mode ignore                            # ← exclude masked regions (if masks/ exists)
 ```
 
 To detach from tmux (training keeps running): press `Ctrl+B`, then `D`. To check on it later: `tmux attach -t train`.
@@ -218,7 +217,7 @@ To detach from tmux (training keeps running): press `Ctrl+B`, then `D`. To check
 |------|---------------|
 | `--gut` | Equirectangular / 360° images — required, MCMC only ([details](RUNPOD_GUIDE.md#6-equirectangular--360-scenes)) |
 | `--tile-mode 2` | Running close to VRAM limits — halves rasterization memory |
-| `--config config.json` | Set parameters that have no CLI flag — learning rates, checkpoint schedules, eval intervals, etc. ([details](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters)) |
+| `--config config.json` | Set parameters that have no CLI flag — learning rates, checkpoint schedules, etc. ([details](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters)) |
 
 For the full flag reference, see [TRAINING_GUIDE.md](TRAINING_GUIDE.md). For worked examples from real training runs, see [RUNPOD_GUIDE.md § Real-World Runs](RUNPOD_GUIDE.md#10-real-world-training-runs).
 
