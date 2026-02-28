@@ -815,7 +815,7 @@ steps-scaler = max(1.0, image_count / 300)
 | `train.sh` | Headless training wrapper with sensible defaults |
 | `download_results.sh` | Package results for download |
 | `vram_monitor.sh` | Track VRAM usage alongside training |
-| `brady_config.json` | Example JSON config for large ERP scene |
+| `example_config.json` | Example JSON config for parameters not available as CLI flags |
 | `CLAUDE.md` | Context for Claude Code on the pod |
 | `TRAINING_GUIDE.md` | Complete parameter reference (technical) |
 | `README.md` | Quick start for the runpod directory |

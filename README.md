@@ -19,7 +19,7 @@ LichtFeld Studio is a C++23/CUDA application — there's no Docker image, so it 
 
 | File | What it's for |
 |------|--------------|
-| `brady_config.json` | Example JSON config showing how to override learning rates and set custom checkpoint intervals. Pass to training with `--config brady_config.json`. See [RUNPOD_GUIDE.md § JSON Config](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters). |
+| `example_config.json` | Example JSON config for parameters not available as CLI flags — learning rates, checkpoint schedules, eval intervals, etc. Pass to training with `--config example_config.json`. See [RUNPOD_GUIDE.md § JSON Config](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters). |
 | `CLAUDE.md` | If you install [Claude Code](https://claude.ai/code) on the pod, this file gives it context about the training environment so it can help you build commands and debug issues. Not required. |
 
 **Documentation:**

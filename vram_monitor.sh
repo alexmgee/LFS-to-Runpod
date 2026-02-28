@@ -2,7 +2,7 @@
 # VRAM monitor — run alongside training to track GPU memory usage
 # Usage: ./vram_monitor.sh [logfile] [interval_seconds]
 #   ./vram_monitor.sh                        # defaults: vram.log, every 30s
-#   ./vram_monitor.sh /workspace/output/brady-gut/vram.log 10
+#   ./vram_monitor.sh /workspace/output/my_scene/vram.log 10
 
 LOGFILE="${1:-vram.log}"
 INTERVAL="${2:-30}"

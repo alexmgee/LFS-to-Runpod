@@ -8,7 +8,7 @@
 # Usage:
 #   ./train.sh --data-path /workspace/datasets/my_scene
 #   ./train.sh --data-path /workspace/datasets/my_scene --iter 50000 --strategy mcmc
-#   ./train.sh --resume /workspace/output/my_scene/checkpoint.ckpt
+#   ./train.sh --resume /workspace/output/my_scene/checkpoints/checkpoint_7000.resume
 #   ./train.sh --help
 #
 # Common flags:
