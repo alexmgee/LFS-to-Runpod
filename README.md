@@ -166,14 +166,28 @@ For the full flag reference, see [TRAINING_GUIDE.md](TRAINING_GUIDE.md). For wor
 
 ### 6. Download results
 
+When training finishes, your results are on the pod at `/workspace/output/`. The `train.sh` wrapper names the output folder after your dataset with a timestamp, e.g., `/workspace/output/my_scene_20260228_143000/`.
+
+The main file you want is the PLY — that's your trained Gaussian Splat scene. You can load it in the LichtFeld Studio desktop app (or any other splat viewer) to see the result.
+
+First, find your output folder on the pod:
 ```bash
-# From your local machine — use SCP (not tar pipe, which can produce 0-byte files)
+# On the pod
+ls /workspace/output/
+```
+
+Then download from your local machine using SCP (use the same `<PORT>` and `<POD_IP>` from earlier steps):
+
+```bash
+# Download just the final PLY file
 scp -P <PORT> -i ~/.ssh/id_ed25519 \
-  root@<POD_IP>:/workspace/output/my_scene_*/point_cloud/iteration_30000/point_cloud.ply \
+  root@<POD_IP>:/workspace/output/my_scene_20260228_143000/point_cloud/iteration_30000/point_cloud.ply \
   ./results/
 
-# Or download the full output directory
+# Or download everything (PLY, checkpoints, eval images, training log)
 scp -P <PORT> -i ~/.ssh/id_ed25519 -r \
-  root@<POD_IP>:/workspace/output/my_scene_*/ \
+  root@<POD_IP>:/workspace/output/my_scene_20260228_143000/ \
   ./results/
 ```
+
+> **Note:** Use SCP for downloads, not tar pipe — tar pipe has been observed to produce 0-byte files on large PLYs. If your training was interrupted, you can resume from a checkpoint. See [RUNPOD_GUIDE.md § Downloading](RUNPOD_GUIDE.md#9-downloading-results).
