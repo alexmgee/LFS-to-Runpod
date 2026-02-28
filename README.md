@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="lichtfeld2runpod.svg" alt="LichtFeld Studio → RunPod" width="400">
+</p>
+
 # LichtFeld Studio on RunPod
 
 Scripts and documentation for building and running [LichtFeld Studio](https://github.com/MrNeRF/LichtFeld-Studio) on RunPod cloud GPUs for headless 3DGS training.
