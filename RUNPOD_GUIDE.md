@@ -638,7 +638,7 @@ scp -P <PORT> -i ~/.ssh/id_ed25519 \
 
 Actual results from actual sessions. Use these to calibrate your expectations for training time, VRAM usage, and quality.
 
-### Run 1: 353 Images — First Attempt (RTX 5090 32GB)
+### Run 1: 353 ERP Images, Indoor — First Attempt (RTX 5090 32GB)
 
 **The scene:** 353 equirectangular images (7680x3840), indoor scene, LichtFeld export format.
 
@@ -659,7 +659,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 - No `--mask-mode ignore` — dataset had masks that weren't being used, so the trainer wasted capacity on masked regions (sky, etc.)
 - MIP filter didn't help for this scene type
 
-### Run 2: 353 Images — OOM Crash (RTX 5090 32GB)
+### Run 2: 353 ERP Images, Indoor — OOM Crash (RTX 5090 32GB)
 
 | Setting | Value |
 |---------|-------|
@@ -672,7 +672,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 
 **Lesson: 8M Gaussians is too much for 32GB VRAM with GUT+PPISP.** The 5090 32GB maxes out around 4M Gaussians for equirectangular scenes.
 
-### Run 3: 353 Images — Working Run (RTX 5090 32GB)
+### Run 3: 353 ERP Images, Indoor — Working Run (RTX 5090 32GB)
 
 | Setting | Value |
 |---------|-------|
@@ -691,7 +691,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 - For GUT scenes, judge quality by loading the PLY in a viewer, not by eval metrics
 - PLY quality was passable but hurt by missing mask mode
 
-### Run 4: 1,396 Images — Full Production Run (RTX PRO 6000 96GB)
+### Run 4: 1,396 ERP Images, Outdoor Streetscape — Full Run (RTX PRO 6000 96GB)
 
 **The scene:** 1,396 equirectangular images, outdoor streetscape, LichtFeld export format.
 
@@ -725,7 +725,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 - 7.6 iter/s is expected for GUT mode with 1,396 images at full resolution
 - Eval images were garbage (GUT eval bug), but training.log confirmed convergence
 
-### Run 5: 2,927 Images — Planned (RTX PRO 6000 96GB)
+### Run 5: 2,927 ERP Images, Outdoor — Planned (RTX PRO 6000 96GB)
 
 **The scene:** 2,927 equirectangular images (7680x3840), outdoor scene, LichtFeld export format.
 
