@@ -45,7 +45,6 @@ Look for: "Loaded X images", "Initialized X points". Any CUDA error = stop and d
   --output-path /workspace/output/smoke_test \
   --iter 50 \
   --steps-scaler 0 \
-  --eval \
   2>&1 | tee /workspace/smoke_test.log
 ```
 
@@ -60,9 +59,7 @@ Start with MCMC and default parameters.
   --data-path /workspace/datasets/SCENE_NAME \
   --strategy mcmc \
   --iter 30000 \
-  --steps-scaler 0 \
-  --eval --save-eval-images \
-  --test-every 8
+  --steps-scaler <image_count / 300>
 ```
 
 Add `--mask-mode ignore` if a `masks/` directory exists in the dataset.
@@ -80,8 +77,7 @@ Only after Stage 4 succeeds. Each improvement = a new training run:
 ## Key Rules
 
 - Always use `--headless`
-- Always use `--eval --save-eval-images --test-every 8`
-- Always use `--steps-scaler 0` (disables auto-scaling, uses --iter exactly)
+- Always calculate `--steps-scaler` from your image count: `max(1.0, image_count / 300)`. The CLI default is 1.0 (no scaling), unlike the GUI which auto-calculates this.
 - Always run inside `tmux` to survive SSH disconnects
 - Start with MCMC strategy (bounded memory, no OOM surprises)
 - Only switch to ADC after a successful MCMC run
