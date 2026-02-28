@@ -83,15 +83,45 @@ See [RUNPOD_GUIDE.md § Building](RUNPOD_GUIDE.md#3-building-lichtfeld-from-sour
 
 Your dataset needs either COLMAP format (`sparse/0/` with `cameras.bin`, `images.bin`, `points3D.bin` + an `images/` folder) or LichtFeld export format (`transforms.json` + `pointcloud.ply` + `images/`).
 
-```bash
-# From your local machine — tar pipe is fastest for large datasets
-tar -cf - -C /path/to/parent my_scene | \
-  ssh -T -p <PORT> -i ~/.ssh/id_ed25519 root@<POD_IP> \
-  "cd /workspace/datasets && tar -xf -"
+Say your dataset is at `D:\Captures\my_scene` on Windows or `/home/user/captures/my_scene` on Linux/Mac. The folder structure looks like:
 
-# Or use SCP for smaller datasets
-scp -P <PORT> -i ~/.ssh/id_ed25519 -r /path/to/my_scene root@<POD_IP>:/workspace/datasets/
 ```
+my_scene/
+  images/
+    IMG_0001.jpg
+    IMG_0002.jpg
+    ...
+  sparse/0/          ← COLMAP format
+    cameras.bin
+    images.bin
+    points3D.bin
+```
+
+**Upload with SCP** (simplest):
+```bash
+# Replace <PORT> and <POD_IP> with your pod's SSH connection info from step 1
+# Replace the path with the actual path to your dataset folder
+
+# Windows (PowerShell):
+scp -P <PORT> -i ~/.ssh/id_ed25519 -r "D:\Captures\my_scene" root@<POD_IP>:/workspace/datasets/
+
+# Linux/Mac:
+scp -P <PORT> -i ~/.ssh/id_ed25519 -r /home/user/captures/my_scene root@<POD_IP>:/workspace/datasets/
+```
+
+**Upload with tar pipe** (faster for large datasets — streams without creating an intermediate file):
+```bash
+# The -C flag sets the parent directory, and the last argument is the folder name within it.
+# This uploads the folder to /workspace/datasets/my_scene on the pod.
+
+# Windows (PowerShell):
+tar -cf - -C "D:\Captures" my_scene | ssh -T -p <PORT> -i ~/.ssh/id_ed25519 root@<POD_IP> "cd /workspace/datasets && tar -xf -"
+
+# Linux/Mac:
+tar -cf - -C /home/user/captures my_scene | ssh -T -p <PORT> -i ~/.ssh/id_ed25519 root@<POD_IP> "cd /workspace/datasets && tar -xf -"
+```
+
+Either way, your dataset ends up at `/workspace/datasets/my_scene/` on the pod.
 
 ### 5. Train
 
