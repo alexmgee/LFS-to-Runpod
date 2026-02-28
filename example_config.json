@@ -1,6 +1,16 @@
 {
-  "scaling_lr": 0.0025,
-  "means_lr": 0.000008,
-  "save_steps": [10000, 20000, 30000],
-  "eval_steps": [10000, 20000, 30000]
+  "iterations": 30000,
+  "means_lr": 0.000016,
+  "shs_lr": 0.0025,
+  "opacity_lr": 0.025,
+  "scaling_lr": 0.005,
+  "rotation_lr": 0.001,
+  "lambda_dssim": 0.2,
+  "min_opacity": 0.005,
+  "refine_every": 100,
+  "start_refine": 500,
+  "stop_refine": 25000,
+  "grad_threshold": 0.0002,
+  "sh_degree": 3,
+  "save_steps": [7000, 30000]
 }
