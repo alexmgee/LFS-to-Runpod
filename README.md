@@ -214,7 +214,7 @@ To detach from tmux (training keeps running): press `Ctrl+B`, then `D`. To check
 |------|---------------|
 | `--gut` | Equirectangular / 360° images — required, MCMC only ([details](RUNPOD_GUIDE.md#6-equirectangular--360-scenes)) |
 | `--tile-mode 2` | Running close to VRAM limits — halves rasterization memory |
-| `--config config.json` | Override learning rates, checkpoint schedules, etc. ([details](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters)) |
+| `--config config.json` | Set parameters that have no CLI flag — learning rates, checkpoint schedules, eval intervals, etc. ([details](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters)) |
 
 For the full flag reference, see [TRAINING_GUIDE.md](TRAINING_GUIDE.md). For worked examples from real training runs, see [RUNPOD_GUIDE.md § Real-World Runs](RUNPOD_GUIDE.md#10-real-world-training-runs).
 

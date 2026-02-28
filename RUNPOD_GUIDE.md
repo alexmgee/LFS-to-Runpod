@@ -638,9 +638,9 @@ scp -P <PORT> -i ~/.ssh/id_ed25519 \
 
 Actual results from actual sessions. Use these to calibrate your expectations for training time, VRAM usage, and quality.
 
-### Run 1: amans-aligned — First Attempt (RTX 5090 32GB)
+### Run 1: Small Scene — First Attempt (RTX 5090 32GB)
 
-**The scene:** 353 equirectangular images (7680x3840), indoor restaurant, LichtFeld export format.
+**The scene:** 353 equirectangular images (7680x3840), indoor scene, LichtFeld export format.
 
 | Setting | Value |
 |---------|-------|
@@ -659,7 +659,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 - No `--mask-mode ignore` — dataset had masks that weren't being used, so the trainer wasted capacity on masked regions (sky, etc.)
 - MIP filter didn't help for this scene type
 
-### Run 2: amans-aligned — OOM Crash (RTX 5090 32GB)
+### Run 2: Small Scene — OOM Crash (RTX 5090 32GB)
 
 | Setting | Value |
 |---------|-------|
@@ -672,7 +672,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 
 **Lesson: 8M Gaussians is too much for 32GB VRAM with GUT+PPISP.** The 5090 32GB maxes out around 4M Gaussians for equirectangular scenes.
 
-### Run 3: amans-aligned — Working Run (RTX 5090 32GB)
+### Run 3: Small Scene — Working Run (RTX 5090 32GB)
 
 | Setting | Value |
 |---------|-------|
@@ -691,9 +691,9 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 - PSNR numbers are meaningless (eval bug with GUT — see [Section 6](#known-bug-eval-images-broken-for-gut-scenes))
 - PLY quality was passable but hurt by missing mask mode
 
-### Run 4: ogallala — Full Production Run (RTX PRO 6000 96GB)
+### Run 4: Medium Scene — Full Production Run (RTX PRO 6000 96GB)
 
-**The scene:** 1,396 equirectangular images, outdoor small-town Main Street, LichtFeld export format.
+**The scene:** 1,396 equirectangular images, outdoor streetscape, LichtFeld export format.
 
 | Setting | Value |
 |---------|-------|
@@ -726,9 +726,9 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 - 7.6 iter/s is expected for GUT mode with 1,396 images at full resolution
 - Eval images were garbage (GUT eval bug), but training.log confirmed convergence
 
-### Run 5: brady — Planned (RTX PRO 6000 96GB)
+### Run 5: Large Scene — Planned (RTX PRO 6000 96GB)
 
-**The scene:** 2,927 equirectangular images (7680x3840), outdoor town center, LichtFeld export format.
+**The scene:** 2,927 equirectangular images (7680x3840), outdoor scene, LichtFeld export format.
 
 | Setting | Value |
 |---------|-------|
@@ -744,7 +744,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 - Added `--bilateral-grid` for exposure compensation (compatible with PPISP)
 - `--tile-mode 2` to stay within VRAM for 16M Gaussians
 - Lower `scaling_lr` (0.0025 vs 0.005 default) — closer to paper's large-scene recommendation
-- Custom `save_steps` for evenly spaced checkpoints (via JSON config)
+- Custom `save_steps` for evenly spaced checkpoints (via `--config`, for parameters with no CLI flag)
 
 ---
 
@@ -799,7 +799,7 @@ steps-scaler = max(1.0, image_count / 300)
 ```bash
 --output-path /workspace/output/my_scene_run1
 --save-eval-images             # Save GT vs rendered comparison images
---config /workspace/config.json  # JSON config for LR overrides
+--config /workspace/config.json  # Set parameters that have no CLI flag
 ```
 
 ### Troubleshooting
