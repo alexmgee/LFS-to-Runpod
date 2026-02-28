@@ -619,7 +619,7 @@ Checkpoint `.resume` files contain full training state (Gaussians, optimizer, it
 
 ### Batch Download with download_results.sh
 
-The `download_results.sh` script packages outputs for download, excluding large intermediates:
+If you want everything in one file instead of downloading individually with SCP, the `download_results.sh` script creates a `.tar.gz` archive on the pod. It includes PLY files, checkpoints, eval images, and logs, but excludes large intermediates (`.bin` files, point cloud cache) to keep the archive smaller. You then SCP the single archive down:
 
 ```bash
 # On the pod:
