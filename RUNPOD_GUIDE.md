@@ -260,7 +260,7 @@ All cloud training uses the `--headless` flag. The `train.sh` wrapper adds this 
 
 ```bash
 cd /workspace/runpod
-./train.sh --data-path /workspace/datasets/my_scene --strategy mcmc --iter 30000
+./train.sh --data-path /workspace/datasets/my_scene --strategy mcmc --iter 30000 --eval --test-every 8
 ```
 
 Or invoke the binary directly:
@@ -270,7 +270,8 @@ Or invoke the binary directly:
   --data-path /workspace/datasets/my_scene \
   --output-path /workspace/output/my_scene_run1 \
   --strategy mcmc \
-  --iter 30000
+  --iter 30000 \
+  --eval --save-eval-images --test-every 8
 ```
 
 ### MCMC vs ADC Strategy
@@ -373,6 +374,7 @@ stdbuf -oL ./train.sh \
   --steps-scaler 4.67 \
   --max-cap 8000000 \
   --mask-mode ignore \
+  --eval --save-eval-images --test-every 8 \
   2>&1 | tee /workspace/output/my_scene.log
 EOF
 chmod +x /workspace/train_my_scene.sh
@@ -415,7 +417,8 @@ If your images are equirectangular projections (2:1 aspect ratio panoramas), you
   --ppisp \
   --mask-mode ignore \
   --max-cap 4000000 \
-  --steps-scaler 1.18
+  --steps-scaler 1.18 \
+  --eval --test-every 8
 ```
 
 ### PPISP for Per-Pixel Shading
@@ -443,16 +446,19 @@ This excludes masked regions from the loss function. Without it, the trainer was
 
 > **Warning:** `--mask-mode segment` can produce black artifacts. Use `ignore` unless you have a specific reason for `segment`.
 
-### Why We Don't Use --eval
+### Known Bug: Eval Images Broken for GUT Scenes
 
-The `--eval` and `--test-every N` flags hold out every Nth training image for evaluation metrics (PSNR/SSIM). This means those images are **never trained on** — you lose real data that would improve your result.
+**The evaluator uses the standard pinhole rasterizer, not GUT ray-tracing.** This means:
 
-We don't recommend this for cloud training:
-- With `--test-every 8`, you lose 12.5% of your training images
-- The quality loss from fewer training images outweighs the value of the metrics
-- Judge quality by **loading the PLY in a splat viewer** (LichtFeld Studio desktop, or any other viewer)
+- All eval images from GUT training runs render with the **wrong projection** → they look like garbage
+- PSNR/SSIM scores are computed against these broken renders → **the numbers are meaningless**
+- The PLY itself is fine — the training loop uses GUT correctly
 
-Additionally, for GUT (equirectangular/360°) scenes, eval is completely broken — the evaluator uses pinhole projection instead of GUT ray-tracing, so the PSNR/SSIM numbers and eval images are meaningless.
+**What to do:**
+- Skip `--save-eval-images` for GUT runs (the images are useless)
+- Don't trust the PSNR/SSIM numbers printed at the end of GUT training
+- Evaluate quality by **loading the PLY in the desktop LichtFeld Studio application**
+- You can still pass `--eval` for checkpoint timing, just don't read the metrics
 
 ---
 
@@ -487,6 +493,7 @@ The `--config config.json` flag lets you set parameters that aren't exposed as C
 | `scaling_lr` | 0.005 | Scale LR — consider lowering for large scenes |
 | `rotation_lr` | 0.001 | Rotation LR |
 | `opacity_lr` | 0.025 | Opacity LR |
+| `eval_steps` | [7000, 30000] | When to evaluate (scaled by steps-scaler) |
 | `save_steps` | [7000, 30000] | When to save checkpoints (scaled by steps-scaler) |
 
 Supports flat format or nested `{"optimization": {...}}`.
@@ -698,8 +705,6 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 | Flags | `--gut --ppisp --mask-mode ignore --eval --save-eval-images --test-every 8` |
 | Config | Default learning rates |
 
-> **Mistake:** `--eval --test-every 8` held out ~175 images from training for metrics that turned out to be useless. Future runs should drop eval entirely and train on all images.
-
 **Result:**
 
 | Metric | Value |
@@ -709,15 +714,16 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 | Speed | 7.6 iter/s |
 | Peak VRAM (arena) | 2,511 MB |
 | Checkpoints | 32,550 and 139,500 |
+| PSNR / SSIM | Not meaningful (GUT eval bug — see [Section 6](#known-bug-eval-images-broken-for-gut-scenes)) |
 | Cost | ~$8.60 |
 
-**PLY quality:** Passable — reasonable for a first production run with correct masks. Room for improvement with tuned learning rates and training on all images (no eval holdout).
+**PLY quality:** Passable — reasonable for a first production run with correct masks. Room for improvement with tuned learning rates.
 
 **Observations:**
 - Hit the 8M cap — scene could probably benefit from higher cap
 - `scaling_lr` (0.005) may be too high for this scene scale — paper recommends 0.001 for large scenes
 - 7.6 iter/s is expected for GUT mode with 1,396 images at full resolution
-- 12.5% of training images were wasted on eval that produced meaningless metrics
+- Eval images were garbage (GUT eval bug), but training.log confirmed convergence
 
 ### Run 5: 2,927 ERP Images, Outdoor — Planned (RTX PRO 6000 96GB)
 
@@ -730,7 +736,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 | Iterations | ~292,800 (30K × 9.76) |
 | Max-cap | 16,000,000 |
 | Steps-scaler | 9.76 |
-| Flags | `--gut --ppisp --bilateral-grid --mask-mode ignore --tile-mode 2` |
+| Flags | `--gut --ppisp --bilateral-grid --mask-mode ignore --tile-mode 2 --test-every 8` |
 | Config | `{"scaling_lr": 0.0025, "save_steps": [50000, 100000, 150000, 200000, 250000, 292800]}` |
 
 **Key changes from Run 4:**
@@ -768,6 +774,7 @@ steps-scaler = max(1.0, image_count / 300)
 --data-path /workspace/datasets/my_scene
 --strategy mcmc                # or adc (perspective scenes only)
 --steps-scaler <value>         # Calculate from image count!
+--eval --test-every 8          # Hold out every 8th image for eval
 ```
 
 **Common quality flags:**
@@ -790,6 +797,7 @@ steps-scaler = max(1.0, image_count / 300)
 **Output control:**
 ```bash
 --output-path /workspace/output/my_scene_run1
+--save-eval-images             # Save GT vs rendered comparison images
 --config /workspace/config.json  # Set parameters that have no CLI flag
 ```
 
