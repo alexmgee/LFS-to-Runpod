@@ -652,7 +652,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 | Steps-scaler | Not set (default 1.0) |
 | Mask-mode | Not set |
 
-**Result:** PSNR 13.35, SSIM 0.698, 26 minutes.
+**Result:** 26 minutes. PSNR/SSIM metrics were reported but are not meaningful — GUT scenes use a ray-tracing rasterizer, but the evaluator uses pinhole projection, so the eval images don't match the actual training output. See [Section 6](#known-bug-eval-images-broken-for-gut-scenes).
 
 **What went wrong:**
 - No `--steps-scaler` — CLI default is 1.0, meaning no scaling was applied. With 353 images, the scaler should have been 1.18
@@ -683,12 +683,12 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 | Flags | `--gut --ppisp` |
 | Mask-mode | Still missing! |
 
-**Result:** PSNR 12.44, SSIM 0.680, 50 minutes, 4M splats, 947 MB PLY.
+**Result:** 50 minutes, 4M splats, 947 MB PLY. (PSNR/SSIM not meaningful for GUT scenes — see Run 1 note above.)
 
 **Lessons learned:**
 - 4M is the practical limit for 32GB VRAM with GUT+PPISP
 - `--mask-mode ignore` was still missing — discovered afterward
-- PSNR numbers are meaningless (eval bug with GUT — see [Section 6](#known-bug-eval-images-broken-for-gut-scenes))
+- For GUT scenes, judge quality by loading the PLY in a viewer, not by eval metrics
 - PLY quality was passable but hurt by missing mask mode
 
 ### Run 4: Medium Scene — Full Production Run (RTX PRO 6000 96GB)
@@ -714,8 +714,7 @@ Actual results from actual sessions. Use these to calibrate your expectations fo
 | Speed | 7.6 iter/s |
 | Peak VRAM (arena) | 2,511 MB |
 | Checkpoints | 32,550 and 139,500 |
-| PSNR | 12.86 (meaningless — GUT eval bug) |
-| SSIM | 0.66 (meaningless — GUT eval bug) |
+| PSNR / SSIM | Not meaningful (GUT eval bug — see [Section 6](#known-bug-eval-images-broken-for-gut-scenes)) |
 | Cost | ~$8.60 |
 
 **PLY quality:** Passable — reasonable for a first production run with correct masks. Room for improvement with tuned learning rates.
