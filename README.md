@@ -31,22 +31,29 @@ LichtFeld Studio is a C++23/CUDA application — there's no Docker image, so it 
 
 ## Getting Started
 
-### 1. Create a RunPod pod
+### 1. Create a persistent volume
 
-- **Template:** RunPod PyTorch 2.x (has CUDA pre-installed)
+Before creating any pods, create a **persistent volume** in RunPod. This is a network disk that mounts at `/workspace` and persists across pod sessions. Everything important lives here — the compiled binary, vcpkg dependencies, your datasets, and training outputs.
+
+Go to RunPod → **Storage** → **New Network Volume**.
+
+- **Size:** The build takes ~40 GB. Add space for your datasets and outputs. 100 GB is enough for a single scene; 300 GB if you plan to train multiple large datasets.
+- **Region:** Pick the same region where you'll create pods (you can only attach a volume to pods in the same region).
+
+### 2. Create a CPU pod for building and uploading
+
+The build takes 25–40 minutes and dataset uploads can take hours for large scenes. Neither requires a GPU. Start with a CPU pod (~$0.12/hr) to avoid paying GPU rates while you wait.
+
+Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
+
+- **Template:** RunPod PyTorch 2.x (has CUDA toolkit for compilation, even on CPU pods)
 - **Container disk:** Default is fine — only holds OS and apt packages
-- **Persistent volume:** Mounted at `/workspace`. The build takes ~40 GB, then add space for your datasets and outputs. 100 GB for a single scene, 300 GB if you're training multiple large datasets.
-- SSH is enabled by default — use the **direct TCP port** shown in the pod's connection info, not the SSH gateway ([why](RUNPOD_GUIDE.md#ssh-access-use-direct-tcp-not-the-ssh-gateway))
+- **Persistent volume:** Attach the volume you created in step 1
+- **Region:** Must match your volume's region
 
-| GPU | VRAM | $/hr | Good for |
-|-----|------|------|----------|
-| RTX 6000 Ada | 48 GB | ~$0.74 | Most scenes up to ~10M Gaussians |
-| A100 80GB | 80 GB | ~$1.39 | Large scenes, 15–20M Gaussians |
-| RTX PRO 6000 | 96 GB | ~$1.69 | Very large scenes, 20M+ Gaussians |
+The CUDA toolkit is installed on the template image, so the build compiles successfully on a CPU pod. The resulting binary just won't *run* for training until you switch to a GPU pod with actual GPU drivers. That's expected — you're only using the CPU pod to compile and upload.
 
-You can build on a CPU pod ($0.12/hr) to save money, then switch to a GPU pod on the same volume for training.
-
-### 2. Clone this repo and upload it to the pod
+### 3. Clone this repo and upload it to the pod
 
 ```bash
 # On your local machine
@@ -54,14 +61,14 @@ git clone https://github.com/alexmgee/LFS-to-Runpod.git
 cd LFS-to-Runpod
 ```
 
-Find your pod's IP and SSH port in the RunPod web UI under **Connection Options → TCP Port Mappings**. It will look something like `207.xx.xx.xx` port `40582`.
+Find your pod's IP and SSH port in the RunPod web UI under your pod → **Connection Options → TCP Port Mappings**. It will look something like `207.xx.xx.xx` port `40582`.
 
 ```bash
 # Upload everything in this repo to the pod
 scp -P <PORT> -i ~/.ssh/id_ed25519 -r . root@<POD_IP>:/workspace/runpod/
 ```
 
-### 3. SSH in and build
+### 4. SSH in and build
 
 ```bash
 ssh -p <PORT> -i ~/.ssh/id_ed25519 root@<POD_IP>
@@ -83,15 +90,17 @@ The build runs through 7 verified stages. Each one reports pass/fail:
 
 Known issues (x264 vcpkg regression, old GCC) are patched automatically. If a stage fails, fix the issue and re-run — the script skips completed stages.
 
-When it finishes, verify the binary works:
+When it finishes, verify the binary exists:
 
 ```bash
 /workspace/LichtFeld-Studio/build/LichtFeld-Studio --help
 ```
 
-See [RUNPOD_GUIDE.md § Building](RUNPOD_GUIDE.md#3-building-lichtfeld-from-source) for troubleshooting.
+> **Note:** On a CPU pod, the binary will build but won't run for training (no GPU drivers). That's expected — you just need it compiled and sitting on the volume. See [RUNPOD_GUIDE.md § Building](RUNPOD_GUIDE.md#3-building-lichtfeld-from-source) for troubleshooting.
 
-### 4. Upload a dataset
+### 5. Upload your dataset
+
+While you're still on the CPU pod, upload your dataset. This avoids paying GPU rates during what can be a long upload.
 
 Your dataset needs either COLMAP format (`sparse/0/` with `cameras.bin`, `images.bin`, `points3D.bin` + an `images/` folder) or LichtFeld export format (`transforms.json` + `pointcloud.ply` + `images/`).
 
@@ -111,7 +120,7 @@ my_scene/
 
 **Upload with SCP** (simplest):
 ```bash
-# Replace <PORT> and <POD_IP> with your pod's SSH connection info from step 1
+# Replace <PORT> and <POD_IP> with your pod's SSH connection info from step 2
 # Replace the path with the actual path to your dataset folder
 
 # Windows (PowerShell):
@@ -135,7 +144,38 @@ tar -cf - -C /home/user/captures my_scene | ssh -T -p <PORT> -i ~/.ssh/id_ed2551
 
 Either way, your dataset ends up at `/workspace/datasets/my_scene/` on the pod.
 
-### 5. Train
+### 6. Switch to a GPU pod
+
+Now that the build and dataset are on your volume, terminate the CPU pod. Then create a GPU pod attached to the same volume.
+
+Go to RunPod → **GPU Cloud** → **Deploy** → choose a GPU:
+
+| GPU | VRAM | Est. $/hr | Good for |
+|-----|------|-----------|----------|
+| RTX 5090 | 32 GB | ~$0.80 | Small scenes, budget runs, up to ~4M Gaussians |
+| RTX 6000 Ada | 48 GB | ~$0.74 | Most scenes, up to ~10M Gaussians |
+| A100 80GB | 80 GB | ~$1.39 | Large scenes, 15–20M Gaussians |
+| RTX PRO 6000 | 96 GB | ~$1.69 | Very large scenes, 20M+ Gaussians |
+
+*Prices are estimates and vary by availability. Check RunPod for current rates.*
+
+- **Template:** RunPod PyTorch 2.x (same as before)
+- **Persistent volume:** Attach the same volume from step 1
+- **Region:** Must match your volume's region
+
+When the pod starts, your build and dataset are already there at `/workspace`. SSH in and verify:
+
+```bash
+ssh -p <PORT> -i ~/.ssh/id_ed25519 root@<POD_IP>
+
+# Should print help text — confirms binary + GPU drivers work
+/workspace/LichtFeld-Studio/build/LichtFeld-Studio --help
+
+# Your dataset should be here
+ls /workspace/datasets/
+```
+
+### 7. Train
 
 On RunPod there is no GUI — training is done entirely through the command line. You build a command by combining flags that control the training strategy, quality settings, and output. The `train.sh` wrapper adds `--headless` automatically and generates an output directory for you.
 
@@ -147,11 +187,14 @@ tmux new -s train
 
 cd /workspace/runpod
 ./train.sh \
-  --data-path /workspace/datasets/my_scene \  # ← your dataset path from step 4
+  --data-path /workspace/datasets/my_scene \  # ← your dataset path from step 5
   --strategy mcmc \                            # ← mcmc (bounded VRAM) or adc (more detail)
   --iter 30000 \                               # ← base iterations (scaled by steps-scaler)
   --steps-scaler 4.67 \                        # ← your image count ÷ 300 (see below)
   --max-cap 8000000 \                          # ← max Gaussians (adjust to your GPU's VRAM)
+  --ppisp \                                    # ← per-pixel shading (improves appearance)
+  --bilateral-grid \                           # ← exposure/white balance compensation
+  --mask-mode ignore \                         # ← exclude masked regions (if masks/ exists)
   --eval --test-every 8                        # ← hold out every 8th image for evaluation
 ```
 
@@ -165,18 +208,17 @@ To detach from tmux (training keeps running): press `Ctrl+B`, then `D`. To check
 | `--steps-scaler` | Your image count ÷ 300. A 500-image dataset → `1.67`. A 1,400-image dataset → `4.67`. Datasets under 300 images don't need this. |
 | `--max-cap` | Depends on your GPU's VRAM. See the [VRAM planning table](RUNPOD_GUIDE.md#8-vram-planning--tile-mode). |
 
-**Common additions:**
+**Other flags worth knowing:**
 
 | Flag | When to add it |
 |------|---------------|
-| `--gut --ppisp` | Equirectangular / 360° images ([details](RUNPOD_GUIDE.md#6-equirectangular--360-scenes)) |
-| `--mask-mode ignore` | Dataset has a `masks/` folder |
-| `--bilateral-grid` | Images taken with varying exposure or white balance |
-| `--tile-mode 2` | Running close to VRAM limits |
+| `--gut` | Equirectangular / 360° images — required, MCMC only ([details](RUNPOD_GUIDE.md#6-equirectangular--360-scenes)) |
+| `--tile-mode 2` | Running close to VRAM limits — halves rasterization memory |
+| `--config config.json` | Override learning rates, checkpoint schedules, etc. ([details](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters)) |
 
 For the full flag reference, see [TRAINING_GUIDE.md](TRAINING_GUIDE.md). For worked examples from real training runs, see [RUNPOD_GUIDE.md § Real-World Runs](RUNPOD_GUIDE.md#10-real-world-training-runs).
 
-### 6. Download results
+### 8. Download results
 
 When training finishes, your results are on the pod at `/workspace/output/`. The `train.sh` wrapper names the output folder after your dataset with a timestamp, e.g., `/workspace/output/my_scene_20260228_143000/`.
 
@@ -188,7 +230,7 @@ First, find your output folder on the pod:
 ls /workspace/output/
 ```
 
-Then download from your local machine using SCP (use the same `<PORT>` and `<POD_IP>` from earlier steps):
+Then download from your local machine using SCP (use the same `<PORT>` and `<POD_IP>` from step 6):
 
 ```bash
 # Download just the final PLY file
@@ -203,3 +245,9 @@ scp -P <PORT> -i ~/.ssh/id_ed25519 -r \
 ```
 
 > **Note:** Use SCP for downloads, not tar pipe — tar pipe has been observed to produce 0-byte files on large PLYs. If your training was interrupted, you can resume from a checkpoint. See [RUNPOD_GUIDE.md § Downloading](RUNPOD_GUIDE.md#9-downloading-results).
+
+### 9. Clean up
+
+When you're done training, **terminate the GPU pod** to stop billing. Your volume and everything on it persists — you can spin up another pod later to train more scenes or resume a run.
+
+If you're done for good, delete the volume too (RunPod → Storage → delete).

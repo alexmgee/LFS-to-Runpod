@@ -54,42 +54,75 @@ Add $3–8 for the initial build (one-time cost, persists on volume). You can al
 
 ## 2. RunPod Setup
 
-### Creating a Pod
+### Create a Persistent Volume First
 
-1. Go to [runpod.io](https://www.runpod.io) → **GPU Cloud** → **Deploy**
-2. Choose your GPU (see [VRAM Planning](#8-vram-planning--tile-mode) for sizing)
-3. Select template: **RunPod PyTorch 2.x** (comes with CUDA pre-installed)
-4. **Container disk** can stay at the default — it only holds the OS and apt packages
-5. Create or attach a **persistent volume** (see below) — the build, datasets, and outputs all live here
+Before creating any pods, create a persistent volume. This is a network disk that mounts at `/workspace` and persists across pod sessions. Everything important lives here — the compiled binary, vcpkg dependencies, your datasets, and training outputs.
 
-> **Cost-saving tip:** Create a CPU pod ($0.12/hr) for the initial build and dataset uploads. Then terminate it, and spin up a GPU pod on the same volume for training. The build persists on the volume.
+Go to RunPod → **Storage** → **New Network Volume**.
 
-### Volume Setup
-
-The persistent volume mounts at `/workspace` and survives pod termination.
-
-- **Sizing:** The build takes ~40 GB. Add space for your datasets and outputs. 100 GB works for a single scene, 300 GB if you're training multiple large datasets.
+- **Size:** The build takes ~40 GB. Add space for your datasets and outputs. 100 GB works for a single scene, 300 GB if you're training multiple large datasets. Volumes can be resized later (may need to stop the pod first).
+- **Region:** Pick the same region where you'll create pods. Pods can only attach volumes in the same region.
 - **What goes where:**
   - `/workspace/LichtFeld-Studio/` — source code and build (persists)
   - `/workspace/vcpkg/` — package manager and dependencies (persists)
   - `/workspace/datasets/` — your training data
   - `/workspace/output/` — training results
 
-Volumes can be resized after creation (may need to stop the pod first).
+### Start with a CPU Pod
 
-### SSH Access: Use Direct TCP, NOT the SSH Gateway
+The build takes 25–40 minutes and dataset uploads can take hours for large scenes. Neither requires a GPU. Start with a CPU pod (~$0.12/hr) to avoid paying GPU rates while you wait.
 
-RunPod offers two SSH methods:
+Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 
-1. **SSH Gateway** (`ssh.runpod.io`) — **Does NOT work reliably with Windows SCP.** You'll get `subsystem request failed on channel 0` errors. Avoid this.
-2. **Direct TCP** (exposed port) — **Use this.** When you expose port 22, RunPod assigns a high-numbered external port (e.g., 40582).
+- **Template:** RunPod PyTorch 2.x (has CUDA toolkit pre-installed for compilation)
+- **Container disk:** Default is fine — only holds OS and apt packages
+- **Persistent volume:** Attach the volume you just created
+- **Region:** Must match your volume's region
 
-Your SSH connection looks like:
+The build will complete through stage 5 (CMake configure) on a CPU pod. Stage 6 (compile) also works — the CUDA toolkit is available for compilation even without a GPU. The resulting binary just won't *run* until you switch to a GPU pod with actual GPU drivers.
+
+After building and uploading your datasets, terminate the CPU pod and create a GPU pod on the same volume for training.
+
+### GPU Selection for Training
+
+When you're ready to train, create a GPU pod attached to the same volume.
+
+| GPU | VRAM | Est. $/hr | Good for |
+|-----|------|-----------|----------|
+| RTX 5090 | 32 GB | ~$0.80 | Small scenes, budget runs, up to ~4M Gaussians |
+| RTX 6000 Ada | 48 GB | ~$0.74 | Most scenes, up to ~10M Gaussians |
+| A100 80GB | 80 GB | ~$1.39 | Large scenes, 15–20M Gaussians |
+| RTX PRO 6000 | 96 GB | ~$1.69 | Very large scenes, 20M+ Gaussians |
+
+*Prices are estimates and vary by availability. Check RunPod for current rates.*
+
+See [VRAM Planning](#8-vram-planning--tile-mode) for detailed guidance on matching GPU to scene size.
+
+### Connecting to Your Pod
+
+There are three ways to access your pod. You'll use at least one of the first two.
+
+**1. SSH over direct TCP (recommended for file transfers and training)**
+
+RunPod assigns a public IP and TCP port for SSH. Find these in the RunPod web UI under your pod → **Connection Options → TCP Port Mappings**. It will look something like `207.xx.xx.xx` port `40582`.
+
 ```bash
 ssh -p <PORT> -i ~/.ssh/id_ed25519 root@<POD_IP>
 ```
 
-Find `<POD_IP>` and `<PORT>` in the RunPod web UI under your pod's connection info (look for "TCP Port Mappings").
+This is the connection you'll use for SCP uploads/downloads and for running training commands. It works reliably with SCP and tar pipes.
+
+**2. Web terminal (good for quick commands and writing scripts)**
+
+Click **Connect** on your pod in the RunPod UI to open a browser-based terminal. This is convenient for writing training scripts directly on the pod (using `nano` or heredoc), checking on progress, or running quick commands.
+
+The web terminal doesn't support file transfers, so you'll need SSH for uploading datasets and downloading results.
+
+**3. SSH gateway (`ssh.runpod.io`) — avoid this**
+
+RunPod also offers an SSH gateway that proxies through `ssh.runpod.io`. This does not work reliably with Windows SCP — you'll get `subsystem request failed on channel 0` errors. Use direct TCP instead.
+
+> **Warning about Ctrl+C:** In an SSH session, pressing `Ctrl+C` will kill whatever process is running in the foreground. If you're watching training output directly (not in tmux), `Ctrl+C` will kill the training. This is why you should always run training inside tmux — if you accidentally press `Ctrl+C` in the tmux session, you can detach with `Ctrl+B` then `D` instead. If you do kill training by accident, you can resume from the last checkpoint (see [Downloading Results](#9-downloading-results)).
 
 ---
 
@@ -499,14 +532,14 @@ For equirectangular scenes (which share characteristics with city-scale scenes),
 
 ### GPU Recommendations
 
-| GPU | VRAM | $/hr | Max Gaussians | Max with tile-mode 2 | Best For |
-|-----|------|------|---------------|---------------------|----------|
-| RTX 5090 | 32 GB | ~$0.89 | ~4M | ~6M | Budget runs, small scenes |
-| RTX 6000 Ada | 48 GB | ~$0.74 | ~8–10M | ~14–16M | Best value, most scenes |
+| GPU | VRAM | Est. $/hr | Max Gaussians | Max with tile-mode 2 | Good for |
+|-----|------|-----------|---------------|---------------------|----------|
+| RTX 5090 | 32 GB | ~$0.80 | ~4M | ~6M | Small scenes, budget runs |
+| RTX 6000 Ada | 48 GB | ~$0.74 | ~8–10M | ~14–16M | Most scenes |
 | A100 80GB | 80 GB | ~$1.39 | ~15–20M | ~25M+ | Large scenes |
-| RTX PRO 6000 | 96 GB | ~$1.69 | ~20–25M | ~30M+ | Maximum headroom |
+| RTX PRO 6000 | 96 GB | ~$1.69 | ~20–25M | ~30M+ | Very large scenes |
 
-> **Note:** RTX 6000 Ada 48GB at $0.74/hr handles most scenes. Only go bigger for very large datasets or high Gaussian counts.
+*Prices are estimates and vary by availability. Check RunPod for current rates.*
 
 ### Tile Mode
 
