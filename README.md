@@ -6,16 +6,28 @@ LichtFeld Studio is a C++23/CUDA application — there's no Docker image, so it 
 
 ## What's in this repo
 
-| File | Purpose |
-|------|---------|
-| `setup.sh` | Builds LichtFeld Studio from source on a RunPod pod (7 stages, idempotent) |
-| `train.sh` | Headless training wrapper with auto-generated output paths |
-| `download_results.sh` | Package training outputs into a tarball for download |
-| `vram_monitor.sh` | Log GPU memory usage alongside training |
-| `brady_config.json` | Example JSON config for a large equirectangular scene |
-| `CLAUDE.md` | Context file for using Claude Code on the pod |
-| [RUNPOD_GUIDE.md](RUNPOD_GUIDE.md) | Full walkthrough — pod setup, building, uploading, training, downloading, real-world runs with costs and timings, VRAM planning, 360° scene handling, known bugs |
-| [TRAINING_GUIDE.md](TRAINING_GUIDE.md) | Technical parameter reference — MCMC vs ADC, learning rates, complete CLI flag reference, VRAM budgets, recommended commands by scene type |
+**Scripts** — you upload these to the pod and run them in order:
+
+| File | When to use | What it does |
+|------|-------------|-------------|
+| `setup.sh` | Once, when you first create a pod | Installs all dependencies and builds LichtFeld Studio from source. Takes 25–40 min. You don't need to run it again unless the build breaks or you want to update. |
+| `train.sh` | Each training run | Wrapper around the LichtFeld binary. Adds `--headless`, generates an output directory, and passes your flags through. |
+| `vram_monitor.sh` | During training (optional) | Run in a second terminal to log GPU memory usage every 30 seconds. Helps you figure out if you can increase `--max-cap` or need `--tile-mode 2`. |
+| `download_results.sh` | After training (optional) | Packages an output folder into a `.tar.gz` for download. Alternative to downloading files individually with SCP. |
+
+**Config:**
+
+| File | What it's for |
+|------|--------------|
+| `brady_config.json` | Example JSON config showing how to override learning rates and set custom checkpoint intervals. Pass to training with `--config brady_config.json`. See [RUNPOD_GUIDE.md § JSON Config](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters). |
+| `CLAUDE.md` | If you install [Claude Code](https://claude.ai/code) on the pod, this file gives it context about the training environment so it can help you build commands and debug issues. Not required. |
+
+**Documentation:**
+
+| Document | What it covers |
+|----------|---------------|
+| [RUNPOD_GUIDE.md](RUNPOD_GUIDE.md) | The full walkthrough. Read this if the Getting Started section below isn't enough. Covers pod setup, building, uploading, training, downloading, VRAM planning, equirectangular/360° scenes, JSON config, known bugs, and real-world training runs with actual costs and timings. |
+| [TRAINING_GUIDE.md](TRAINING_GUIDE.md) | Technical parameter reference. MCMC vs ADC strategy comparison, learning rate details, complete CLI flag table, VRAM budgets per GPU, recommended commands by scene type, and troubleshooting. |
 
 ## Getting Started
 
