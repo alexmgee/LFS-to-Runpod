@@ -244,7 +244,9 @@ scp -P <PORT> -i ~/.ssh/id_ed25519 -r \
   ./results/
 ```
 
-> **Note:** Use SCP for downloads, not tar pipe — tar pipe has been observed to produce 0-byte files on large PLYs. If your training was interrupted, you can resume from a checkpoint. See [RUNPOD_GUIDE.md § Downloading](RUNPOD_GUIDE.md#9-downloading-results).
+> **Tip:** If you want everything as a single archive, run `./download_results.sh /workspace/output/my_scene_20260228_143000` on the pod first — it creates a `.tar.gz` excluding large intermediates, which you then SCP down. See [RUNPOD_GUIDE.md § Downloading](RUNPOD_GUIDE.md#9-downloading-results).
+>
+> **Warning:** Use SCP for downloads, not tar pipe (streaming `tar` directly over SSH). Tar pipe has been observed to produce 0-byte files on large PLYs.
 
 ### 9. Clean up
 
