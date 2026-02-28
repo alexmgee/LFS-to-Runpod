@@ -125,27 +125,44 @@ Either way, your dataset ends up at `/workspace/datasets/my_scene/` on the pod.
 
 ### 5. Train
 
-Always run training inside tmux so it survives SSH disconnections:
+On RunPod there is no GUI — training is done entirely through the command line. You build a command by combining flags that control the training strategy, quality settings, and output. The `train.sh` wrapper adds `--headless` automatically and generates an output directory for you.
+
+Here is an example command. **You will need to change the values** to match your dataset:
 
 ```bash
-# On the pod
+# On the pod — always run training inside tmux so it survives SSH disconnections
 tmux new -s train
 
 cd /workspace/runpod
 ./train.sh \
-  --data-path /workspace/datasets/my_scene \
-  --strategy mcmc \
-  --iter 30000 \
-  --steps-scaler 4.67 \
-  --max-cap 8000000 \
-  --eval --test-every 8
+  --data-path /workspace/datasets/my_scene \  # ← your dataset path from step 4
+  --strategy mcmc \                            # ← mcmc (bounded VRAM) or adc (more detail)
+  --iter 30000 \                               # ← base iterations (scaled by steps-scaler)
+  --steps-scaler 4.67 \                        # ← your image count ÷ 300 (see below)
+  --max-cap 8000000 \                          # ← max Gaussians (adjust to your GPU's VRAM)
+  --eval --test-every 8                        # ← hold out every 8th image for evaluation
 ```
 
-Detach from tmux with `Ctrl+B` then `D`. Re-attach later with `tmux attach -t train`.
+To detach from tmux (training keeps running): press `Ctrl+B`, then `D`. To check on it later: `tmux attach -t train`.
 
-> **Important:** The `--steps-scaler` flag adjusts training length for your dataset size. The CLI defaults to 1.0 (no scaling), but datasets with more than 300 images need it. Calculate as `image_count / 300`. A 1,400-image dataset needs `--steps-scaler 4.67`. Without it, your scene will be undertrained. See [RUNPOD_GUIDE.md § Steps-Scaler](RUNPOD_GUIDE.md#steps-scaler).
+**Flags you need to set per-dataset:**
 
-For equirectangular/360° scenes, add `--gut --ppisp --mask-mode ignore`. See [RUNPOD_GUIDE.md § Equirectangular](RUNPOD_GUIDE.md#6-equirectangular--360-scenes).
+| Flag | How to set it |
+|------|--------------|
+| `--data-path` | Path to your uploaded dataset (e.g., `/workspace/datasets/my_scene`) |
+| `--steps-scaler` | Your image count ÷ 300. A 500-image dataset → `1.67`. A 1,400-image dataset → `4.67`. Datasets under 300 images don't need this. |
+| `--max-cap` | Depends on your GPU's VRAM. See the [VRAM planning table](RUNPOD_GUIDE.md#8-vram-planning--tile-mode). |
+
+**Common additions:**
+
+| Flag | When to add it |
+|------|---------------|
+| `--gut --ppisp` | Equirectangular / 360° images ([details](RUNPOD_GUIDE.md#6-equirectangular--360-scenes)) |
+| `--mask-mode ignore` | Dataset has a `masks/` folder |
+| `--bilateral-grid` | Images taken with varying exposure or white balance |
+| `--tile-mode 2` | Running close to VRAM limits |
+
+For the full flag reference, see [TRAINING_GUIDE.md](TRAINING_GUIDE.md). For worked examples from real training runs, see [RUNPOD_GUIDE.md § Real-World Runs](RUNPOD_GUIDE.md#10-real-world-training-runs).
 
 ### 6. Download results
 
