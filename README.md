@@ -112,7 +112,7 @@ When it finishes, verify the binary exists:
 
 ### 5. Upload your dataset
 
-Upload your dataset while you're on a CPU pod (if using Option B) or before starting training on a GPU pod. Uploading on a CPU pod avoids paying GPU rates during what can be a long transfer.
+Upload your dataset while you're on a CPU pod (if using Option A) or before starting training on a GPU pod. Uploading on a CPU pod avoids paying GPU rates during what can be a long transfer.
 
 Your dataset needs either COLMAP format (`sparse/0/` with `cameras.bin`, `images.bin`, `points3D.bin` + an `images/` folder) or LichtFeld export format (`transforms.json` + `pointcloud.ply` + `images/`).
 
@@ -158,7 +158,7 @@ Either way, your dataset ends up at `/workspace/datasets/my_scene/` on the pod.
 
 ### 6. Switch to a GPU pod
 
-If you used a CPU pod (Option B), terminate it now — the build prep and dataset are on your volume. Create a GPU pod attached to the same volume.
+If you used a CPU pod (Option A), terminate it now — the build prep and dataset are on your volume. Create a GPU pod attached to the same volume.
 
 Go to RunPod → **GPU Cloud** → **Deploy** → choose a GPU:
 
