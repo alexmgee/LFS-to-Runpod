@@ -392,5 +392,5 @@ echo "    3. Or train direct: cd ${WORKSPACE}/runpod && ./train.sh --data-path $
 echo ""
 echo "  IMPORTANT: Run training inside tmux to survive SSH disconnects:"
 echo "    tmux new -s train"
-echo "    ./train.sh --data-path ${DATASETS_DIR}/my_scene --strategy mcmc --iter 30000 --eval --test-every 8"
+echo "    ./train.sh --data-path ${DATASETS_DIR}/my_scene --strategy mcmc --iter 30000"
 echo ""

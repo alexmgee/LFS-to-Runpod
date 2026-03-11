@@ -14,11 +14,10 @@
 4. [Uploading Datasets](#4-uploading-datasets)
 5. [Training Fundamentals](#5-training-fundamentals)
 6. [Equirectangular / 360° Scenes](#6-equirectangular--360-scenes)
-7. [JSON Config for Advanced Parameters](#7-json-config-for-advanced-parameters)
+7. [Training Config](#7-training-config)
 8. [VRAM Planning & Tile Mode](#8-vram-planning--tile-mode)
 9. [Downloading Results](#9-downloading-results)
-10. [Real-World Training Runs](#10-real-world-training-runs)
-11. [Quick Reference](#11-quick-reference)
+10. [Quick Reference](#10-quick-reference)
 
 ---
 
@@ -443,47 +442,42 @@ This excludes masked regions from the loss function. Without it, the trainer was
 
 > **Warning:** `--mask-mode segment` can produce black artifacts. Use `ignore` unless you have a specific reason for `segment`.
 
-### Why We Don't Use --eval
+### Known Bug: Eval Broken for GUT Scenes
 
-The `--eval` and `--test-every N` flags hold out every Nth training image for evaluation metrics (PSNR/SSIM). This means those images are **never trained on** — you lose real data that would improve your result.
-
-We don't recommend this for cloud training:
-- With `--test-every 8`, you lose 12.5% of your training images
-- The quality loss from fewer training images outweighs the value of the metrics
-- Judge quality by **loading the PLY in a splat viewer** (LichtFeld Studio desktop, or any other viewer)
-
-Additionally, for GUT (equirectangular/360°) scenes, eval is completely broken — the evaluator uses pinhole projection instead of GUT ray-tracing, so the PSNR/SSIM numbers and eval images are meaningless.
+If you're using `--gut` (equirectangular/360° scenes), be aware that the evaluator uses pinhole projection instead of GUT ray-tracing. This means eval PSNR/SSIM numbers and eval images are **not meaningful** for GUT scenes. The trained PLY quality is unaffected — only the evaluation output is wrong. Judge quality by loading the PLY in a splat viewer.
 
 ---
 
-## 7. JSON Config for Advanced Parameters
+## 7. Training Config
 
-The `--config config.json` flag lets you set parameters that aren't exposed as CLI flags.
+### Export from the GUI (recommended)
 
-> **Important:** The config file must include **all mandatory fields** — you cannot provide a partial config with just the values you want to change. A partial config will crash with a "type must be number" error. Copy the full example below and modify the values you need.
+The best way to configure training parameters is through the LichtFeld Studio desktop app:
 
-### Full Config Template
+1. **Open LichtFeld Studio** on your local machine
+2. **Set up your training parameters** — strategy, max-cap, quality flags, iterations, learning rates, checkpoint schedule, etc. The GUI lets you visualize and adjust everything before committing to a cloud run.
+3. **Export the config:** File → Export Config (saves a `.json` file)
+4. **Upload the config to the pod:**
+   ```bash
+   scp -P <PORT> -i ~/.ssh/id_ed25519 my_config.json root@<POD_IP>:/workspace/configs/
+   ```
+5. **Use it in training:**
+   ```bash
+   ./train.sh \
+     --data-path /workspace/datasets/my_scene \
+     --config /workspace/configs/my_config.json \
+     --steps-scaler 4.67
+   ```
 
-```json
-{
-  "iterations": 30000,
-  "means_lr": 0.000016,
-  "shs_lr": 0.0025,
-  "opacity_lr": 0.025,
-  "scaling_lr": 0.005,
-  "rotation_lr": 0.001,
-  "lambda_dssim": 0.2,
-  "min_opacity": 0.005,
-  "refine_every": 100,
-  "start_refine": 500,
-  "stop_refine": 25000,
-  "grad_threshold": 0.0002,
-  "sh_degree": 3,
-  "save_steps": [7000, 30000]
-}
-```
+This eliminates hand-written JSON errors. The GUI exports all mandatory fields correctly, and you can tune parameters visually before paying for GPU time.
 
-All fields above are **required**. The following fields are optional and can be added to the config:
+### Manual JSON config (fallback)
+
+If you need to write a config by hand, the file must include **all 13 mandatory fields** — a partial config crashes with a "type must be number" error.
+
+See `example_config.json` in this repo for the full template. Copy it and modify the values you need.
+
+The following fields are optional and can be added:
 
 | Optional Parameter | Default | Notes |
 |-----------|---------|-------|
@@ -492,50 +486,9 @@ All fields above are **required**. The following fields are optional and can be 
 | `strategy` | "adc" | "mcmc" or "adc" |
 | `max_cap` | 0 | Max Gaussians for MCMC |
 
-> **Note:** `--steps-scaler` scales iteration and step counts (iterations, refine_every, start_refine, stop_refine, save_steps, eval_steps) but does **not** scale learning rates. Your LR values are used as-is.
-
-### Example: Lower Scaling LR + Even Checkpoints
-
-```json
-{
-  "iterations": 30000,
-  "means_lr": 0.000016,
-  "shs_lr": 0.0025,
-  "opacity_lr": 0.025,
-  "scaling_lr": 0.002,
-  "rotation_lr": 0.001,
-  "lambda_dssim": 0.2,
-  "min_opacity": 0.005,
-  "refine_every": 100,
-  "start_refine": 500,
-  "stop_refine": 25000,
-  "grad_threshold": 0.0002,
-  "sh_degree": 3,
-  "save_steps": [50000, 100000, 150000, 200000, 250000, 292800]
-}
-```
-
-```bash
-./train.sh \
-  --data-path /workspace/datasets/my_scene \
-  --config /workspace/configs/my_config.json \
-  --strategy mcmc \
-  --steps-scaler 9.76 \
-  ...
-```
-
 Supports flat format or nested `{"optimization": {...}}`.
 
-### Learning Rate Notes
-
-LichtFeld's defaults are already tuned for large scenes:
-- `means_lr` (0.000016) matches the 3DGS paper's large-scene recommendation
-- Position LR decays exponentially to 1% of initial by training end
-- `scaling_lr` (0.005) is 5x higher than the paper's large-scene recommendation (0.001)
-
-For equirectangular scenes (which share characteristics with city-scale scenes), consider:
-- `"scaling_lr": 0.0025` — half default, between default and paper's large-scene recommendation
-- `"means_lr": 0.000008` — half default, for even more precise positioning
+> **Note:** `--steps-scaler` scales iteration and step counts (iterations, refine_every, start_refine, stop_refine, save_steps, eval_steps) but does **not** scale learning rates. Your LR values are used as-is.
 
 ---
 
@@ -637,13 +590,13 @@ my_scene_20260227_143000/
 
 ### Resume Checkpoints
 
-Checkpoint `.resume` files contain full training state (Gaussians, optimizer, iteration count). To resume an interrupted run:
+Checkpoint `.resume` files contain full training state (Gaussians, optimizer, iteration count, bilateral grid, PPISP). To resume an interrupted run:
 
 ```bash
 ./train.sh --resume /workspace/output/my_scene/checkpoints/checkpoint_7000.resume
 ```
 
-> **Note:** Changing `--max-cap` mid-resume may cause issues — the optimizer state is pre-allocated to the original max-cap size. Stick with the original settings when resuming.
+> **Important:** You **cannot change any parameters** when resuming — the checkpoint restores the exact training state, including all settings. This is by design. If you need different parameters, start a new training run instead.
 
 ### Batch Download with download_results.sh
 
@@ -662,121 +615,7 @@ scp -P <PORT> -i ~/.ssh/id_ed25519 \
 
 ---
 
-## 10. Real-World Training Runs
-
-Actual results from actual sessions. Use these to calibrate your expectations for training time, VRAM usage, and quality.
-
-### Run 1: 353 ERP Images, Indoor — First Attempt (RTX 5090 32GB)
-
-**The scene:** 353 equirectangular images (7680x3840), indoor scene, LichtFeld export format.
-
-| Setting | Value |
-|---------|-------|
-| GPU | RTX 5090 32GB ($0.89/hr) |
-| Strategy | MCMC |
-| Iterations | 30,000 |
-| Max-cap | 1,000,000 |
-| Flags | `--gut --enable-mip --ppisp` |
-| Steps-scaler | Not set (default 1.0) |
-| Mask-mode | Not set |
-
-**Result:** 26 minutes. PSNR/SSIM metrics were reported but are not meaningful — GUT scenes use a ray-tracing rasterizer, but the evaluator uses pinhole projection, so the eval images don't match the actual training output. See [Section 6](#known-bug-eval-images-broken-for-gut-scenes).
-
-**What went wrong:**
-- No `--steps-scaler` — CLI default is 1.0, meaning no scaling was applied. With 353 images, the scaler should have been 1.18
-- No `--mask-mode ignore` — dataset had masks that weren't being used, so the trainer wasted capacity on masked regions (sky, etc.)
-- MIP filter didn't help for this scene type
-
-### Run 2: 353 ERP Images, Indoor — OOM Crash (RTX 5090 32GB)
-
-| Setting | Value |
-|---------|-------|
-| Strategy | MCMC |
-| Max-cap | 8,000,000 |
-| Steps-scaler | 1.18 |
-| Flags | `--gut --ppisp` |
-
-**Result:** CUDA OOM crash at 4.9M Gaussians.
-
-**Lesson: 8M Gaussians is too much for 32GB VRAM with GUT+PPISP.** The 5090 32GB maxes out around 4M Gaussians for equirectangular scenes.
-
-### Run 3: 353 ERP Images, Indoor — Working Run (RTX 5090 32GB)
-
-| Setting | Value |
-|---------|-------|
-| Strategy | MCMC |
-| Iterations | 35,400 (30K × 1.18) |
-| Max-cap | 4,000,000 |
-| Steps-scaler | 1.18 |
-| Flags | `--gut --ppisp` |
-| Mask-mode | Still missing! |
-
-**Result:** 50 minutes, 4M splats, 947 MB PLY. (PSNR/SSIM not meaningful for GUT scenes — see Run 1 note above.)
-
-**Lessons learned:**
-- 4M is the practical limit for 32GB VRAM with GUT+PPISP
-- `--mask-mode ignore` was still missing — discovered afterward
-- For GUT scenes, judge quality by loading the PLY in a viewer, not by eval metrics
-- PLY quality was passable but hurt by missing mask mode
-
-### Run 4: 1,396 ERP Images, Outdoor Streetscape — Full Run (RTX PRO 6000 96GB)
-
-**The scene:** 1,396 equirectangular images, outdoor streetscape, LichtFeld export format.
-
-| Setting | Value |
-|---------|-------|
-| GPU | RTX PRO 6000 96GB ($1.69/hr) |
-| Strategy | MCMC |
-| Iterations | 139,500 (30K × 4.65) |
-| Max-cap | 8,000,000 |
-| Steps-scaler | 4.65 |
-| Flags | `--gut --ppisp --mask-mode ignore --eval --save-eval-images --test-every 8` |
-| Config | Default learning rates |
-
-> **Mistake:** `--eval --test-every 8` held out ~175 images from training for metrics that turned out to be useless. Future runs should drop eval entirely and train on all images.
-
-**Result:**
-
-| Metric | Value |
-|--------|-------|
-| Final splats | 8,000,000 (hit cap) |
-| Training time | 18,301s (~5 hours) |
-| Speed | 7.6 iter/s |
-| Peak VRAM (arena) | 2,511 MB |
-| Checkpoints | 32,550 and 139,500 |
-| Cost | ~$8.60 |
-
-**PLY quality:** Passable — reasonable for a first production run with correct masks. Room for improvement with tuned learning rates and training on all images (no eval holdout).
-
-**Observations:**
-- Hit the 8M cap — scene could probably benefit from higher cap
-- `scaling_lr` (0.005) may be too high for this scene scale — paper recommends 0.001 for large scenes
-- 7.6 iter/s is expected for GUT mode with 1,396 images at full resolution
-- 12.5% of training images were wasted on eval that produced meaningless metrics
-
-### Run 5: 2,927 ERP Images, Outdoor — Planned (RTX PRO 6000 96GB)
-
-**The scene:** 2,927 equirectangular images (7680x3840), outdoor scene, LichtFeld export format.
-
-| Setting | Value |
-|---------|-------|
-| GPU | RTX PRO 6000 96GB ($1.69/hr) |
-| Strategy | MCMC |
-| Iterations | ~292,800 (30K × 9.76) |
-| Max-cap | 16,000,000 |
-| Steps-scaler | 9.76 |
-| Flags | `--gut --ppisp --bilateral-grid --mask-mode ignore --tile-mode 2` |
-| Config | `{"scaling_lr": 0.0025, "save_steps": [50000, 100000, 150000, 200000, 250000, 292800]}` |
-
-**Key changes from Run 4:**
-- Added `--bilateral-grid` for exposure compensation (compatible with PPISP)
-- `--tile-mode 2` to stay within VRAM for 16M Gaussians
-- Lower `scaling_lr` (0.0025 vs 0.005 default) — closer to paper's large-scene recommendation
-- Custom `save_steps` for evenly spaced checkpoints (via `--config`, for parameters with no CLI flag)
-
----
-
-## 11. Quick Reference
+## 10. Quick Reference
 
 ### Steps-Scaler Calculation
 
@@ -881,4 +720,4 @@ steps-scaler = max(1.0, image_count / 300)
 
 ---
 
-*Last updated: Feb 2026. Prices and GPU availability on RunPod change frequently — verify current rates before starting.*
+*Last updated: Mar 2026. Prices and GPU availability on RunPod change frequently — verify current rates before starting.*

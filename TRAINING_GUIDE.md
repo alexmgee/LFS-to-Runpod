@@ -146,9 +146,7 @@ Before constructing a command, determine these properties of the dataset:
   --strategy mcmc \
   --iter 30000 \
   --sh-degree 3 \
-  --max-cap 500000 \
-  --eval --save-eval-images \
-  --test-every 8
+  --max-cap 500000
 ```
 
 VRAM: ~8-15 GB. Fast training, compact result.
@@ -162,9 +160,7 @@ VRAM: ~8-15 GB. Fast training, compact result.
   --iter 30000 \
   --sh-degree 3 \
   --max-cap 3000000 \
-  --enable-mip \
-  --eval --save-eval-images \
-  --test-every 8
+  --enable-mip
 ```
 
 VRAM: ~20-35 GB. Mip filter helps with depth range variation (close furniture + far walls).
@@ -180,9 +176,7 @@ VRAM: ~20-35 GB. Mip filter helps with depth range variation (close furniture + 
   --sh-degree 3 \
   --max-cap 6000000 \
   --enable-mip \
-  --bilateral-grid \
-  --eval --save-eval-images \
-  --test-every 8
+  --bilateral-grid
 ```
 
 VRAM: ~40-60 GB. Bilateral grid compensates for exposure variation across images.
@@ -200,14 +194,11 @@ VRAM: ~40-60 GB. Bilateral grid compensates for exposure variation across images
   --max-cap 6000000 \
   --enable-mip \
   --bilateral-grid \
-  --eval --save-eval-images \
-  --test-every 16 \
   --max-width 3840
 ```
 
 VRAM: ~50-80 GB. More iterations needed for convergence with many images.
-`--max-width 3840` caps image resolution to manage memory. Increase `--test-every`
-to keep more images for training.
+`--max-width 3840` caps image resolution to manage memory.
 
 ### Multi-Camera / Video Capture (varying exposures per camera)
 
@@ -219,9 +210,7 @@ to keep more images for training.
   --sh-degree 3 \
   --max-cap 4000000 \
   --ppisp --ppisp-controller \
-  --enable-mip \
-  --eval --save-eval-images \
-  --test-every 8
+  --enable-mip
 ```
 
 VRAM: ~35-55 GB. PPISP learns per-camera exposure, vignetting, color correction, and
@@ -417,5 +406,6 @@ Outputs written to `--output-path`:
 
 ### Resume after interruption
 ```bash
-./train.sh --resume /workspace/output/my_scene_TIMESTAMP/checkpoint/iteration_7000.ckpt
+./train.sh --resume /workspace/output/my_scene_TIMESTAMP/checkpoint/iteration_7000.resume
 ```
+Note: you cannot change any parameters when resuming — the checkpoint restores the full training state. Start a new run if you need different settings.

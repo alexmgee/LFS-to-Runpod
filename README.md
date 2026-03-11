@@ -23,14 +23,14 @@ LichtFeld Studio is a C++23/CUDA application — there's no Docker image, so it 
 
 | File | What it's for |
 |------|--------------|
-| `example_config.json` | Example JSON config for parameters not available as CLI flags — learning rates, checkpoint schedules, eval intervals, etc. Pass to training with `--config example_config.json`. See [RUNPOD_GUIDE.md § JSON Config](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters). |
+| `example_config.json` | Example JSON config showing all mandatory fields. You probably won't need this — the recommended workflow is to export a config from the LichtFeld Studio GUI instead (see step 7). |
 | `CLAUDE.md` | If you install [Claude Code](https://claude.ai/code) on the pod, this file gives it context about the training environment so it can help you build commands and debug issues. Not required. |
 
 **Documentation:**
 
 | Document | What it covers |
 |----------|---------------|
-| [RUNPOD_GUIDE.md](RUNPOD_GUIDE.md) | The full walkthrough. Read this if the Getting Started section below isn't enough. Covers pod setup, building, uploading, training, downloading, VRAM planning, equirectangular/360° scenes, JSON config, known bugs, and real-world training runs with actual costs and timings. |
+| [RUNPOD_GUIDE.md](RUNPOD_GUIDE.md) | The full walkthrough. Read this if the Getting Started section below isn't enough. Covers pod setup, building, uploading, training, downloading, VRAM planning, equirectangular/360° scenes, config export, and troubleshooting. |
 | [TRAINING_GUIDE.md](TRAINING_GUIDE.md) | Technical parameter reference. MCMC vs ADC strategy comparison, learning rate details, complete CLI flag table, VRAM budgets per GPU, recommended commands by scene type, and troubleshooting. |
 
 ## Getting Started
@@ -179,38 +179,50 @@ ssh -p <PORT> -i ~/.ssh/id_ed25519 root@<POD_IP>
 ls /workspace/datasets/
 ```
 
-### 7. Train
+### 7. Configure and train
 
-On RunPod there is no GUI — training is done entirely through the command line. You build a command by combining flags that control the training strategy, quality settings, and output. The `train.sh` wrapper adds `--headless` automatically and generates an output directory for you.
+On RunPod there is no GUI — training is done entirely through the command line. But you can (and should) configure your training parameters in the LichtFeld Studio desktop app first, then export the config and upload it to the pod.
 
-Here is an example command. **You will need to change the values** to match your dataset:
+#### Export a config from the GUI (recommended)
+
+The best way to configure training is through the LichtFeld Studio desktop app:
+
+1. **Open LichtFeld Studio** on your local machine
+2. **Set up your training parameters** — strategy, max-cap, quality flags, iterations, learning rates, checkpoint schedule, etc. The GUI lets you visualize and adjust everything before committing to a cloud run.
+3. **Export the config:** File → Export Config (saves a `.json` file)
+4. **Upload the config to the pod:**
+   ```bash
+   scp -P <PORT> -i ~/.ssh/id_ed25519 my_config.json root@<POD_IP>:/workspace/configs/
+   ```
+
+This eliminates hand-written JSON errors. The GUI exports all mandatory fields correctly, and you get to tune parameters visually before paying for GPU time.
+
+> **Why not hand-write JSON?** LichtFeld's config format requires **all 13 mandatory fields** — a partial config crashes with a "type must be number" error. The GUI handles this automatically. See `example_config.json` for the full template if you need to write one manually.
+
+#### Run training
+
+Always run training inside tmux so it survives SSH disconnections:
 
 ```bash
-# On the pod — always run training inside tmux so it survives SSH disconnections
+# On the pod
 tmux new -s train
 
 cd /workspace/runpod
 ./train.sh \
-  --data-path /workspace/datasets/my_scene \  # ← your dataset path from step 5
-  --strategy mcmc \                            # ← mcmc (bounded VRAM) or adc (more detail)
-  --iter 30000 \                               # ← base iterations (scaled by steps-scaler)
-  --steps-scaler 4.67 \                        # ← your image count ÷ 300 (see below)
-  --max-cap 8000000 \                          # ← max Gaussians (adjust to your GPU's VRAM)
-  --ppisp \                                    # ← per-pixel shading (improves appearance)
-  --bilateral-grid \                           # ← exposure/white balance compensation
-  --mask-mode ignore \                         # ← exclude masked regions (if masks/ exists)
-  --eval --test-every 8                        # ← hold out every 8th image for evaluation
+  --data-path /workspace/datasets/my_scene \
+  --config /workspace/configs/my_config.json \
+  --steps-scaler 4.67
 ```
 
 To detach from tmux (training keeps running): press `Ctrl+B`, then `D`. To check on it later: `tmux attach -t train`.
 
-**Flags you need to set per-dataset:**
+**Flags you still need to set per-run** (these aren't in the config file):
 
 | Flag | How to set it |
 |------|--------------|
 | `--data-path` | Path to your uploaded dataset (e.g., `/workspace/datasets/my_scene`) |
 | `--steps-scaler` | Your image count ÷ 300. A 500-image dataset → `1.67`. A 1,400-image dataset → `4.67`. Datasets under 300 images don't need this. |
-| `--max-cap` | Depends on your GPU's VRAM. See the [VRAM planning table](RUNPOD_GUIDE.md#8-vram-planning--tile-mode). |
+| `--config` | Path to your exported config file |
 
 **Other flags worth knowing:**
 
@@ -218,9 +230,9 @@ To detach from tmux (training keeps running): press `Ctrl+B`, then `D`. To check
 |------|---------------|
 | `--gut` | Equirectangular / 360° images — required, MCMC only ([details](RUNPOD_GUIDE.md#6-equirectangular--360-scenes)) |
 | `--tile-mode 2` | Running close to VRAM limits — halves rasterization memory |
-| `--config config.json` | Set parameters that have no CLI flag — learning rates, checkpoint schedules, eval intervals, etc. ([details](RUNPOD_GUIDE.md#7-json-config-for-advanced-parameters)) |
+| `--max-cap N` | Max Gaussians — adjust to your GPU's VRAM. See the [VRAM planning table](RUNPOD_GUIDE.md#8-vram-planning--tile-mode). |
 
-For the full flag reference, see [TRAINING_GUIDE.md](TRAINING_GUIDE.md). For worked examples from real training runs, see [RUNPOD_GUIDE.md § Real-World Runs](RUNPOD_GUIDE.md#10-real-world-training-runs).
+For the full flag reference, see [TRAINING_GUIDE.md](TRAINING_GUIDE.md). For RunPod-specific guidance on equirectangular scenes, VRAM planning, and troubleshooting, see [RUNPOD_GUIDE.md](RUNPOD_GUIDE.md).
 
 ### 8. Download results
 
