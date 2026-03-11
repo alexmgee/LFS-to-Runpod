@@ -77,7 +77,7 @@ The bulk of the build time is vcpkg dependency compilation (~20–40 min) and da
 
 **Option B: Build on a GPU pod (simplest)**
 
-Skip this section — when you create your GPU pod for training (see [GPU Selection](#gpu-selection-for-training)), run `setup.sh` there. Everything works in one step. The build takes 25–40 minutes at GPU rates (~$0.50–1.00 one-time).
+Skip the CPU pod entirely — create your GPU pod (see [GPU Selection](#gpu-selection-for-training)) and run `setup.sh` there. Everything works in one step. The build takes 25–40 minutes at GPU rates (~$0.50–1.00 one-time).
 
 Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 
