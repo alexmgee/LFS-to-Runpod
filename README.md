@@ -62,7 +62,7 @@ Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 
 **Option B: Build directly on a GPU pod (simplest)**
 
-Skip the CPU pod entirely — just create your GPU pod (step 6) and run `setup.sh` there. The build takes 25–40 minutes and you'll pay GPU rates during that time (~$0.50–1.00), but everything works in one step.
+If you'd rather not deal with two pods, skip the CPU pod and do everything on a GPU pod. Jump to step 6 to create your GPU pod first, then come back to steps 3–5 to clone, build, and upload on it. The build takes 25–40 minutes at GPU rates (~$0.50–1.00 extra), but everything works in one step.
 
 ### 3. Clone this repo and upload it to the pod
 
