@@ -69,15 +69,15 @@ Go to RunPod → **Storage** → **New Network Volume**.
 
 ### Pod Options for Building
 
-You can either build directly on a GPU pod (simplest) or save money by doing the slow parts on a cheap CPU pod first.
+You can save money by doing the slow parts on a cheap CPU pod first, or build directly on a GPU pod if you prefer simplicity.
 
-**Option A: Build on a GPU pod (simplest)**
-
-Skip this section — when you create your GPU pod for training (see [GPU Selection](#gpu-selection-for-training)), run `setup.sh` there. Everything works in one step. The build takes 25–40 minutes at GPU rates (~$0.50–1.00 one-time).
-
-**Option B: Start on a CPU pod (saves money)**
+**Option A: Start on a CPU pod (recommended)**
 
 The bulk of the build time is vcpkg dependency compilation (~20–40 min) and dataset uploads (potentially hours). Neither needs CUDA. A CPU pod at ~$0.12/hr lets you do this cheaply.
+
+**Option B: Build on a GPU pod (simplest)**
+
+Skip this section — when you create your GPU pod for training (see [GPU Selection](#gpu-selection-for-training)), run `setup.sh` there. Everything works in one step. The build takes 25–40 minutes at GPU rates (~$0.50–1.00 one-time).
 
 Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 

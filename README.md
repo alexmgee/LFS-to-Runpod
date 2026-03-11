@@ -47,13 +47,9 @@ Go to RunPod → **Storage** → **New Network Volume**.
 
 You have two options for the initial build:
 
-**Option A: Build directly on a GPU pod (simplest)**
+**Option A: Start on a CPU pod to save money (recommended)**
 
-Skip to step 3. When you create your GPU pod in step 6, run `setup.sh` there. The build takes 25–40 minutes and you'll pay GPU rates during that time (~$0.50–1.00), but it's straightforward and everything works in one step.
-
-**Option B: Start on a CPU pod to save money (two-step)**
-
-The most expensive part of the build is vcpkg dependency compilation (~20–40 min). This doesn't need CUDA and can run on a CPU pod at ~$0.12/hr. Dataset uploads (which can take hours for large scenes) can also happen on a CPU pod.
+The most expensive part of the build is vcpkg dependency compilation (~20–40 min). This doesn't need CUDA and can run on a CPU pod at ~$0.12/hr. Dataset uploads (which can take hours for large scenes) can also happen on the same CPU pod.
 
 Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 
@@ -63,6 +59,10 @@ Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 - **Region:** Must match your volume's region
 
 > **What works on CPU, what doesn't:** `setup.sh` will install system packages, GCC, CMake, vcpkg, clone the source, and install all vcpkg dependencies (the slow 20–40 min part). It will then exit gracefully when CMake can't find the CUDA toolkit — that's expected. Upload your datasets while still on this pod, then terminate it. When you create a GPU pod on the same volume and re-run `setup.sh`, the cached work means it completes in just a few minutes.
+
+**Option B: Build directly on a GPU pod (simplest)**
+
+Skip to step 3. When you create your GPU pod in step 6, run `setup.sh` there. The build takes 25–40 minutes and you'll pay GPU rates during that time (~$0.50–1.00), but it's straightforward and everything works in one step.
 
 ### 3. Clone this repo and upload it to the pod
 
