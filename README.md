@@ -24,7 +24,6 @@ LichtFeld Studio is a C++23/CUDA application — there's no Docker image, so it 
 | File | What it's for |
 |------|--------------|
 | `example_config.json` | Example JSON config showing all mandatory fields. You probably won't need this — the recommended workflow is to export a config from the LichtFeld Studio GUI instead (see step 7). |
-| `CLAUDE.md` | If you install [Claude Code](https://claude.ai/code) on the pod, this file gives it context about the training environment so it can help you build commands and debug issues. Not required. |
 
 **Documentation:**
 
