@@ -279,23 +279,46 @@ if [ -z "$CUDA_COMPILER" ]; then
     CUDA_COMPILER=$(which nvcc 2>/dev/null || true)
 fi
 
+NO_CUDA=false
 if [ -z "$CUDA_COMPILER" ]; then
-    fail "Cannot find nvcc. Is CUDA installed? Check: ls /usr/local/cuda*/bin/nvcc"
+    warn "No CUDA compiler (nvcc) found."
+    warn "Will attempt cmake configure anyway to cache vcpkg dependencies..."
+    NO_CUDA=true
+else
+    check "Using CUDA compiler: ${CUDA_COMPILER}"
 fi
-check "Using CUDA compiler: ${CUDA_COMPILER}"
 
-cmake -B "${BUILD_DIR}" -S . -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_COMPILER="${CUDA_COMPILER}" \
-    -DCMAKE_C_COMPILER=gcc \
-    -DCMAKE_CXX_COMPILER=g++ \
-    -DBUILD_PYTHON_STUBS=OFF \
-    -DBUILD_CUDA_PTX_ONLY=ON \
-    2>&1 | tee "${WORKSPACE}/configure_log.txt"
+# Build cmake args
+CMAKE_ARGS=(
+    -B "${BUILD_DIR}" -S . -G Ninja
+    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_C_COMPILER=gcc
+    -DCMAKE_CXX_COMPILER=g++
+    -DBUILD_PYTHON_STUBS=OFF
+    -DBUILD_CUDA_PTX_ONLY=ON
+)
+if [ "$NO_CUDA" = false ]; then
+    CMAKE_ARGS+=(-DCMAKE_CUDA_COMPILER="${CUDA_COMPILER}")
+fi
+
+cmake "${CMAKE_ARGS[@]}" 2>&1 | tee "${WORKSPACE}/configure_log.txt"
 
 CONFIGURE_EXIT=$?
 if [ $CONFIGURE_EXIT -ne 0 ]; then
     echo ""
+    if [ "$NO_CUDA" = true ]; then
+        echo -e "${YELLOW}══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}  CMake configure failed — no CUDA toolkit on this pod.${NC}"
+        echo -e "${YELLOW}  But vcpkg dependencies are now cached on the volume!${NC}"
+        echo -e "${YELLOW}${NC}"
+        echo -e "${YELLOW}  Next steps:${NC}"
+        echo -e "${YELLOW}    1. Upload your datasets now (while still on this CPU pod)${NC}"
+        echo -e "${YELLOW}    2. Terminate this pod${NC}"
+        echo -e "${YELLOW}    3. Create a GPU pod on the same volume${NC}"
+        echo -e "${YELLOW}    4. Re-run setup.sh — it will pick up here in minutes${NC}"
+        echo -e "${YELLOW}══════════════════════════════════════════════════════════════${NC}"
+        exit 0
+    fi
     fail "CMake configure failed (exit code $CONFIGURE_EXIT). Check ${WORKSPACE}/configure_log.txt"
 fi
 
@@ -354,11 +377,8 @@ mkdir -p "${DATASETS_DIR}" "${OUTPUT_DIR}"
 
 # Copy training context files
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "${SCRIPT_DIR}/CLAUDE.md" ]; then
-    cp "${SCRIPT_DIR}/CLAUDE.md" "${LICHTFELD_DIR}/CLAUDE.md"
-fi
 mkdir -p "${WORKSPACE}/runpod"
-for f in TRAINING_GUIDE.md train.sh download_results.sh README.md CLAUDE.md; do
+for f in TRAINING_GUIDE.md train.sh download_results.sh README.md; do
     [ -f "${SCRIPT_DIR}/${f}" ] && cp "${SCRIPT_DIR}/${f}" "${WORKSPACE}/runpod/${f}"
 done
 chmod +x "${WORKSPACE}/runpod/"*.sh 2>/dev/null || true

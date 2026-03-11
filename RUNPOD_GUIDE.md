@@ -47,7 +47,7 @@ Based on actual training runs:
 | 1,396 images, 8M Gaussians | RTX PRO 6000 96GB ($1.69/hr) | ~5 hours | ~$8.60 |
 | 2,927 images, 16M Gaussians | RTX PRO 6000 96GB ($1.69/hr) | ~10+ hours | ~$17+ |
 
-Add $3–8 for the initial build (one-time cost, persists on volume). You can also build on a cheap CPU pod ($0.12/hr) and switch to a GPU pod for training.
+Add $0.50–1.00 for the initial build on a GPU pod (one-time cost, persists on volume). You can save more by doing the slow dependency installation on a cheap CPU pod ($0.12/hr) and switching to a GPU pod only for the final compile + training.
 
 ---
 
@@ -67,20 +67,28 @@ Go to RunPod → **Storage** → **New Network Volume**.
   - `/workspace/datasets/` — your training data
   - `/workspace/output/` — training results
 
-### Start with a CPU Pod
+### Pod Options for Building
 
-The build takes 25–40 minutes and dataset uploads can take hours for large scenes. Neither requires a GPU. Start with a CPU pod (~$0.12/hr) to avoid paying GPU rates while you wait.
+You can either build directly on a GPU pod (simplest) or save money by doing the slow parts on a cheap CPU pod first.
+
+**Option A: Build on a GPU pod (simplest)**
+
+Skip this section — when you create your GPU pod for training (see [GPU Selection](#gpu-selection-for-training)), run `setup.sh` there. Everything works in one step. The build takes 25–40 minutes at GPU rates (~$0.50–1.00 one-time).
+
+**Option B: Start on a CPU pod (saves money)**
+
+The bulk of the build time is vcpkg dependency compilation (~20–40 min) and dataset uploads (potentially hours). Neither needs CUDA. A CPU pod at ~$0.12/hr lets you do this cheaply.
 
 Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 
-- **Template:** RunPod PyTorch 2.x (has CUDA toolkit pre-installed for compilation)
+- **Template:** Ubuntu 22.04 (note: PyTorch templates are only available on GPU pods — CPU pods offer Ubuntu templates only)
 - **Container disk:** Default is fine — only holds OS and apt packages
 - **Persistent volume:** Attach the volume you just created
 - **Region:** Must match your volume's region
 
-The build will complete through stage 5 (CMake configure) on a CPU pod. Stage 6 (compile) also works — the CUDA toolkit is available for compilation even without a GPU. The resulting binary just won't *run* until you switch to a GPU pod with actual GPU drivers.
+Run `setup.sh` on the CPU pod. It will complete stages 0–4 (system packages, GCC 14, CMake, vcpkg bootstrap, clone and patch source) and begin stage 5. During stage 5, vcpkg dependency installation will succeed (this is the ~20–40 minute slow part), but CMake configure will then fail because there's no CUDA toolkit (nvcc). **This is expected.**
 
-After building and uploading your datasets, terminate the CPU pod and create a GPU pod on the same volume for training.
+While still on the CPU pod, upload your datasets too (see [Uploading Datasets](#4-uploading-datasets)). Everything is on the persistent volume, so when you terminate the CPU pod and create a GPU pod on the same volume, re-running `setup.sh` will skip the completed stages and pick up from the CMake configure — finishing the build in just a few minutes.
 
 ### GPU Selection for Training
 

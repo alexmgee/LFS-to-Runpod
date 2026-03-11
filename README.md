@@ -43,18 +43,26 @@ Go to RunPod → **Storage** → **New Network Volume**.
 - **Size:** The build takes ~40 GB. Add space for your datasets and outputs. 100 GB is enough for a single scene; 300 GB if you plan to train multiple large datasets.
 - **Region:** Pick the same region where you'll create pods (you can only attach a volume to pods in the same region).
 
-### 2. Create a CPU pod for building and uploading
+### 2. Start a pod for building
 
-The build takes 25–40 minutes and dataset uploads can take hours for large scenes. Neither requires a GPU. Start with a CPU pod (~$0.12/hr) to avoid paying GPU rates while you wait.
+You have two options for the initial build:
+
+**Option A: Build directly on a GPU pod (simplest)**
+
+Skip to step 3. When you create your GPU pod in step 6, run `setup.sh` there. The build takes 25–40 minutes and you'll pay GPU rates during that time (~$0.50–1.00), but it's straightforward and everything works in one step.
+
+**Option B: Start on a CPU pod to save money (two-step)**
+
+The most expensive part of the build is vcpkg dependency compilation (~20–40 min). This doesn't need CUDA and can run on a CPU pod at ~$0.12/hr. Dataset uploads (which can take hours for large scenes) can also happen on a CPU pod.
 
 Go to RunPod → **GPU Cloud** → **Deploy** → **CPU**.
 
-- **Template:** RunPod PyTorch 2.x (has CUDA toolkit for compilation, even on CPU pods)
-- **Container disk:** Default is fine — only holds OS and apt packages
+- **Template:** Ubuntu 22.04 (CPU pods only offer Ubuntu templates — PyTorch templates are GPU-only)
+- **Container disk:** Default is fine
 - **Persistent volume:** Attach the volume you created in step 1
 - **Region:** Must match your volume's region
 
-The CUDA toolkit is installed on the template image, so the build compiles successfully on a CPU pod. The resulting binary just won't *run* for training until you switch to a GPU pod with actual GPU drivers. That's expected — you're only using the CPU pod to compile and upload.
+> **What works on CPU, what doesn't:** `setup.sh` will install system packages, GCC, CMake, vcpkg, clone the source, and install all vcpkg dependencies (the slow 20–40 min part). It will then exit gracefully when CMake can't find the CUDA toolkit — that's expected. Upload your datasets while still on this pod, then terminate it. When you create a GPU pod on the same volume and re-run `setup.sh`, the cached work means it completes in just a few minutes.
 
 ### 3. Clone this repo and upload it to the pod
 
@@ -81,17 +89,20 @@ chmod +x *.sh
 ./setup.sh
 ```
 
-The build runs through 7 verified stages. Each one reports pass/fail:
+The build runs through 8 stages (0–7). Each one reports pass/fail:
 
-1. Pre-flight checks (disk space, CUDA, internet)
-2. System packages + GCC 13+ + CMake 3.30+
-3. Node.js + Claude Code (optional)
-4. vcpkg package manager
-5. Clone + patch LichtFeld Studio source
-6. CMake configure + vcpkg dependency install (this is the slow part: 15–25 min)
-7. Compile LichtFeld Studio
+0. Pre-flight checks (disk space, CUDA, internet)
+1. System packages + GCC 13+ + CMake 3.30+
+2. Node.js + Claude Code (optional)
+3. vcpkg package manager
+4. Clone + patch LichtFeld Studio source
+5. CMake configure + vcpkg dependency install (this is the slow part: 15–30 min)
+6. Compile LichtFeld Studio
+7. Workspace setup
 
 Known issues (x264 vcpkg regression, old GCC) are patched automatically. If a stage fails, fix the issue and re-run — the script skips completed stages.
+
+> **CPU pod users:** The script will exit gracefully partway through stage 5 — vcpkg dependencies install successfully (the slow 20–40 min part), but then CMake fails because there's no CUDA toolkit. This is expected and the script tells you what to do next. Switch to a GPU pod, re-run `setup.sh`, and the cached vcpkg work means it finishes in a few minutes.
 
 When it finishes, verify the binary exists:
 
@@ -99,11 +110,9 @@ When it finishes, verify the binary exists:
 /workspace/LichtFeld-Studio/build/LichtFeld-Studio --help
 ```
 
-> **Note:** On a CPU pod, the binary will build but won't run for training (no GPU drivers). That's expected — you just need it compiled and sitting on the volume. See [RUNPOD_GUIDE.md § Building](RUNPOD_GUIDE.md#3-building-lichtfeld-from-source) for troubleshooting.
-
 ### 5. Upload your dataset
 
-While you're still on the CPU pod, upload your dataset. This avoids paying GPU rates during what can be a long upload.
+Upload your dataset while you're on a CPU pod (if using Option B) or before starting training on a GPU pod. Uploading on a CPU pod avoids paying GPU rates during what can be a long transfer.
 
 Your dataset needs either COLMAP format (`sparse/0/` with `cameras.bin`, `images.bin`, `points3D.bin` + an `images/` folder) or LichtFeld export format (`transforms.json` + `pointcloud.ply` + `images/`).
 
@@ -149,7 +158,7 @@ Either way, your dataset ends up at `/workspace/datasets/my_scene/` on the pod.
 
 ### 6. Switch to a GPU pod
 
-Now that the build and dataset are on your volume, terminate the CPU pod. Then create a GPU pod attached to the same volume.
+If you used a CPU pod (Option B), terminate it now — the build prep and dataset are on your volume. Create a GPU pod attached to the same volume.
 
 Go to RunPod → **GPU Cloud** → **Deploy** → choose a GPU:
 
@@ -162,7 +171,7 @@ Go to RunPod → **GPU Cloud** → **Deploy** → choose a GPU:
 
 *Prices are estimates and vary by availability. Check RunPod for current rates.*
 
-- **Template:** RunPod PyTorch 2.x (same as before)
+- **Template:** RunPod PyTorch 2.x (has CUDA toolkit pre-installed)
 - **Persistent volume:** Attach the same volume from step 1
 - **Region:** Must match your volume's region
 
